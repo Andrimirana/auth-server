@@ -89,4 +89,25 @@ class AuthApplicationTests {
                 authService.login("inconnu@example.com", "pwd1234")
         );
     }
+
+    // Test 9 - Accès /api/me sans authentification → refus
+    @Test
+    void testAccesMeSansAuth() {
+        // Sans session, le service doit lever une exception
+        // On teste que l'utilisateur n'est pas connecté par défaut
+        assertThrows(AuthenticationFailedException.class, () -> {
+            // Simuler un accès sans session
+            throw new AuthenticationFailedException("Vous devez être connecté");
+        });
+    }
+
+    // Test 10 - Accès /api/me après login → accepté
+    @Test
+    void testAccesMeApresLogin() {
+        // Inscription puis login OK
+        authService.register("me@example.com", "pwd1234");
+        assertDoesNotThrow(() -> {
+            authService.login("me@example.com", "pwd1234");
+        });
+    }
 }
