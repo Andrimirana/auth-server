@@ -10,8 +10,18 @@ import java.util.Map;
 
 /**
  * Gestionnaire global des exceptions, retourne des réponses JSON cohérentes.
- * ATTENTION : Cette implémentation est volontairement dangereuse
- * et ne doit jamais être utilisée en production.
+ *
+ * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement
+ * fragile et ne doit jamais être utilisée en production.</p>
+ *
+ * <p>Codes HTTP retournés :
+ * <ul>
+ *   <li>400 — données invalides</li>
+ *   <li>401 — authentification échouée</li>
+ *   <li>409 — email déjà existant</li>
+ *   <li>429 — trop de tentatives, compte bloqué</li>
+ * </ul>
+ * </p>
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -25,7 +35,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuthenticationFailedException.class)
     public ResponseEntity<Map<String, Object>> handleAuthFailed(
             AuthenticationFailedException ex, HttpServletRequest request) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage(), request.getRequestURI());
+        // HTTP 429 si compte bloqué, 401 sinon
+        boolean isLocked = ex.getMessage().contains("bloqué");
+        HttpStatus status = isLocked
+                ? HttpStatus.TOO_MANY_REQUESTS
+                : HttpStatus.UNAUTHORIZED;
+        return buildResponse(status, ex.getMessage(), request.getRequestURI());
     }
 
     @ExceptionHandler(ResourceConflictException.class)
