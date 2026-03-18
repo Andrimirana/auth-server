@@ -1,33 +1,37 @@
 package com.example.auth.service;
 
+import com.example.auth.dto.LoginRequest;
+import com.example.auth.dto.LoginResponse;
+import com.example.auth.entity.AccessToken;
+import com.example.auth.entity.AuthNonce;
 import com.example.auth.entity.User;
 import com.example.auth.exception.AuthenticationFailedException;
 import com.example.auth.exception.InvalidInputException;
 import com.example.auth.exception.ResourceConflictException;
+import com.example.auth.repository.AuthNonceRepository;
 import com.example.auth.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
- * Service principal d'authentification pour TP2.
+ * Service principal d'authentification TP3.
  *
- * <p>Améliorations par rapport au TP1 :
- * <ul>
- *   <li>Hachage BCrypt — mot de passe jamais stocké en clair</li>
- *   <li>Politique de mot de passe stricte (12 caractères minimum)</li>
- *   <li>Anti brute-force : blocage après 5 échecs pendant 2 minutes</li>
- * </ul>
- * </p>
+ * <p>Protocole HMAC-SHA256 avec nonce et timestamp :</p>
+ * <ol>
+ *   <li>Le client calcule : {@code hmac = HMAC_SHA256(password, email:nonce:timestamp)}</li>
+ *   <li>Le serveur récupère le mot de passe en clair, recalcule le HMAC et compare</li>
+ *   <li>Le nonce empêche le rejeu, le timestamp limite la fenêtre d'attaque</li>
+ * </ol>
  *
- * <p><b>AVERTISSEMENT :</b> TP2 améliore le stockage mais ne protège
- * pas encore contre le rejeu. Si un attaquant capture la requête de
- * login, il peut tenter de la rejouer. Corrigé au TP3 avec HMAC + nonce.</p>
+ * <p><b>NOTE PÉDAGOGIQUE :</b> Le chiffrement réversible du mot de passe
+ * est accepté ici pour simplifier l'apprentissage du protocole signé.
+ * En industrie, on éviterait de stocker un mot de passe déchiffrable.
+ * TP4 ajoutera le chiffrement AES-GCM via Master Key.</p>
  */
 @Service
 public class AuthService {
@@ -35,37 +39,47 @@ public class AuthService {
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
     private static final int MAX_ATTEMPTS = 5;
     private static final int LOCK_MINUTES = 2;
+    private static final long TIMESTAMP_WINDOW_SECONDS = 60L;
 
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final AuthNonceRepository nonceRepository;
+    private final HmacService hmacService;
+    private final TokenService tokenService;
     private final PasswordPolicyValidator passwordPolicyValidator;
 
     public AuthService(UserRepository userRepository,
-                       PasswordEncoder passwordEncoder,
+                       AuthNonceRepository nonceRepository,
+                       HmacService hmacService,
+                       TokenService tokenService,
                        PasswordPolicyValidator passwordPolicyValidator) {
         this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
+        this.nonceRepository = nonceRepository;
+        this.hmacService = hmacService;
+        this.tokenService = tokenService;
         this.passwordPolicyValidator = passwordPolicyValidator;
     }
 
     /**
-     * Inscrit un nouvel utilisateur après validation stricte du mot de passe.
+     * Inscrit un nouvel utilisateur après validation du mot de passe.
      *
-     * @param email    l'email de l'utilisateur
-     * @param password le mot de passe en clair (sera haché avant stockage)
+     * @param email           email de l'utilisateur
+     * @param password        mot de passe en clair
+     * @param passwordConfirm confirmation du mot de passe
      * @return l'utilisateur créé
-     * @throws InvalidInputException     si email ou mot de passe invalide
-     * @throws ResourceConflictException si l'email est déjà utilisé
+     * @throws InvalidInputException     si données invalides
+     * @throws ResourceConflictException si email déjà utilisé
      */
-    public User register(String email, String password) {
+    public User register(String email, String password, String passwordConfirm) {
         if (email == null || email.isBlank()) {
             throw new InvalidInputException("Email ne peut pas être vide");
         }
         if (!email.contains("@")) {
             throw new InvalidInputException("Format email invalide");
         }
+        if (!password.equals(passwordConfirm)) {
+            throw new InvalidInputException("Les mots de passe ne correspondent pas");
+        }
 
-        // Validation politique TP2
         passwordPolicyValidator.validate(password);
 
         if (userRepository.findByEmail(email).isPresent()) {
@@ -73,9 +87,8 @@ public class AuthService {
             throw new ResourceConflictException("Email déjà utilisé");
         }
 
-        // Hachage BCrypt avant stockage
-        String hash = passwordEncoder.encode(password);
-        User user = new User(email, hash);
+        // TP3 : stockage en clair (nécessaire pour HMAC)
+        User user = new User(email, password);
         userRepository.save(user);
 
         logger.info("Inscription réussie pour : {}", email);
@@ -83,50 +96,77 @@ public class AuthService {
     }
 
     /**
-     * Authentifie un utilisateur avec protection anti brute-force.
+     * Authentifie via le protocole HMAC-SHA256 avec nonce et timestamp.
      *
-     * @param email    l'email
-     * @param password le mot de passe en clair
-     * @return un token de session UUID
-     * @throws AuthenticationFailedException si identifiants incorrects ou compte bloqué
+     * <p>Vérifications dans l'ordre :</p>
+     * <ol>
+     *   <li>Email existe</li>
+     *   <li>Timestamp dans la fenêtre ±60 secondes</li>
+     *   <li>Nonce non déjà utilisé (anti-rejeu)</li>
+     *   <li>HMAC valide (comparaison en temps constant)</li>
+     * </ol>
+     *
+     * @param request la requête de login contenant email, nonce, timestamp, hmac
+     * @return LoginResponse avec accessToken et expiresAt
+     * @throws AuthenticationFailedException si une vérification échoue
      */
-    public String login(String email, String password) {
-        if (email == null || email.isBlank() || password == null || password.isBlank()) {
-            throw new InvalidInputException("Email et mot de passe requis");
+    public LoginResponse login(LoginRequest request) {
+        if (request.getEmail() == null || request.getEmail().isBlank()) {
+            throw new InvalidInputException("Email requis");
         }
 
-        Optional<User> optUser = userRepository.findByEmail(email);
-
-        // Même message pour email inconnu ou mauvais mot de passe
-        // -> évite de divulguer si un email existe en base
+        // 1. Vérifier que l'email existe
+        Optional<User> optUser = userRepository.findByEmail(request.getEmail());
         if (optUser.isEmpty()) {
-            logger.warn("Connexion échouée - email inconnu : {}", email);
+            logger.warn("Connexion échouée - email inconnu : {}", request.getEmail());
             throw new AuthenticationFailedException("Identifiants incorrects");
         }
 
         User user = optUser.get();
 
-        // Vérifier si compte bloqué
-        if (user.getLockUntil() != null
-                && user.getLockUntil().isAfter(LocalDateTime.now())) {
-            logger.warn("Connexion bloquée brute-force pour : {}", email);
-            throw new AuthenticationFailedException(
-                    "Compte bloqué suite à trop de tentatives. Réessayez dans 2 minutes."
-            );
+        // Vérifier si compte verrouillé (anti brute-force conservé du TP2)
+        if (user.getLockUntil() != null && user.getLockUntil().isAfter(LocalDateTime.now())) {
+            logger.warn("Connexion bloquée brute-force pour : {}", request.getEmail());
+            throw new AuthenticationFailedException("Compte bloqué. Réessayez dans 2 minutes.");
         }
 
-        // Vérifier le mot de passe avec BCrypt
-        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+        // 2. Vérifier le timestamp (fenêtre ±60 secondes)
+        long now = Instant.now().getEpochSecond();
+        if (Math.abs(now - request.getTimestamp()) > TIMESTAMP_WINDOW_SECONDS) {
+            logger.warn("Connexion échouée - timestamp invalide pour : {}", request.getEmail());
+            throw new AuthenticationFailedException("Identifiants incorrects");
+        }
+
+        // 3. Vérifier le nonce (anti-rejeu)
+        Optional<AuthNonce> existingNonce = nonceRepository.findByUserAndNonce(user, request.getNonce());
+        if (existingNonce.isPresent()) {
+            logger.warn("Connexion échouée - nonce déjà utilisé pour : {}", request.getEmail());
+            throw new AuthenticationFailedException("Identifiants incorrects");
+        }
+
+        // Enregistrer le nonce immédiatement pour bloquer le rejeu
+        nonceRepository.save(new AuthNonce(user, request.getNonce()));
+
+        // 4. Recalculer le HMAC attendu
+        String message = request.getEmail() + ":" + request.getNonce() + ":" + request.getTimestamp();
+        String expectedHmac;
+        try {
+            expectedHmac = hmacService.compute(user.getPasswordClear(), message);
+        } catch (Exception e) {
+            logger.error("Erreur calcul HMAC pour : {}", request.getEmail());
+            throw new AuthenticationFailedException("Identifiants incorrects");
+        }
+
+        // 5. Comparer en temps constant
+        if (!hmacService.compare(expectedHmac, request.getHmac())) {
             int attempts = user.getFailedAttempts() + 1;
             user.setFailedAttempts(attempts);
-
             if (attempts >= MAX_ATTEMPTS) {
                 user.setLockUntil(LocalDateTime.now().plusMinutes(LOCK_MINUTES));
-                logger.warn("Compte bloqué après {} échecs pour : {}", attempts, email);
+                logger.warn("Compte bloqué après {} échecs pour : {}", attempts, request.getEmail());
             }
-
             userRepository.save(user);
-            logger.warn("Connexion échouée - mauvais mot de passe pour : {}", email);
+            logger.warn("Connexion échouée - HMAC invalide pour : {}", request.getEmail());
             throw new AuthenticationFailedException("Identifiants incorrects");
         }
 
@@ -135,10 +175,24 @@ public class AuthService {
         user.setLockUntil(null);
         userRepository.save(user);
 
-        String token = UUID.randomUUID().toString();
-        logger.info("Connexion réussie pour : {}", email);
-        return token;
+        // 6. Émettre le token SSO
+        AccessToken token = tokenService.generate(user);
+        logger.info("Connexion réussie pour : {}", request.getEmail());
+
+        return new LoginResponse(token.getToken(), token.getExpiresAt());
     }
+
+    /**
+     * Retrouve l'utilisateur associé à un token valide.
+     *
+     * @param tokenValue valeur du token Bearer
+     * @return l'utilisateur propriétaire
+     * @throws AuthenticationFailedException si token invalide ou expiré
+     */
+    public User getUserByToken(String tokenValue) {
+        return tokenService.getUserByToken(tokenValue);
+    }
+
     /**
      * Délègue l'évaluation de force au validateur.
      *

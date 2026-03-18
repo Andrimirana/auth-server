@@ -1,18 +1,20 @@
 package com.example.auth.controller;
 
+import com.example.auth.dto.LoginRequest;
+import com.example.auth.dto.LoginResponse;
+import com.example.auth.dto.RegisterRequest;
 import com.example.auth.entity.User;
 import com.example.auth.service.AuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import jakarta.servlet.http.HttpSession;
+
 import java.util.Map;
 
 /**
- * Controller REST gérant les endpoints d'authentification.
+ * Controller REST gérant les endpoints d'authentification TP3.
  *
- * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement
- * fragile et ne doit jamais être utilisée en production.
- * TP2 améliore le stockage mais reste vulnérable au rejeu.</p>
+ * <p>Protocole TP3 : le mot de passe ne circule plus sur le réseau.
+ * Le client envoie une preuve HMAC avec nonce et timestamp.</p>
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -27,16 +29,17 @@ public class AuthController {
     /**
      * Endpoint d'inscription.
      * POST /api/auth/register
-     * @param email    l'email de l'utilisateur
-     * @param password le mot de passe (doit respecter la politique TP2)
-     * @return 200 avec email, 400 si invalide, 409 si email déjà existant
+     * Body JSON : { "email": "...", "password": "...", "passwordConfirm": "..." }
      */
     @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(
-            @RequestParam String email,
-            @RequestParam String password) {
+            @RequestBody RegisterRequest request) {
 
-        User user = authService.register(email, password);
+        User user = authService.register(
+                request.getEmail(),
+                request.getPassword(),
+                request.getPasswordConfirm()
+        );
         return ResponseEntity.ok(Map.of(
                 "message", "Inscription réussie",
                 "email", user.getEmail()
@@ -44,50 +47,23 @@ public class AuthController {
     }
 
     /**
-     * Endpoint de connexion.
+     * Endpoint de connexion TP3 — protocole HMAC.
      * POST /api/auth/login
-     * @param email    l'email
-     * @param password le mot de passe en clair
-     * @param session  la session HTTP
-     * @return 200 avec token, 401 si identifiants incorrects, 429 si compte bloqué
+     * Body JSON : { "email": "...", "nonce": "...", "timestamp": 123, "hmac": "..." }
      */
     @PostMapping("/login")
-    public ResponseEntity<Map<String, Object>> login(
-            @RequestParam String email,
-            @RequestParam String password,
-            HttpSession session) {
-
-        // login() retourne maintenant un token String (TP2)
-        String token = authService.login(email, password);
-        session.setAttribute("userEmail", email);
-        session.setAttribute("token", token);
-
-        return ResponseEntity.ok(Map.of(
-                "message", "Connexion réussie",
-                "email", email,
-                "token", token
-        ));
-    }
-
-    /**
-     * Endpoint de déconnexion.
-     * POST /api/auth/logout
-     */
-    @PostMapping("/logout")
-    public ResponseEntity<Map<String, Object>> logout(HttpSession session) {
-        session.invalidate();
-        return ResponseEntity.ok(Map.of("message", "Déconnexion réussie"));
+    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+        LoginResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
     }
 
     /**
      * Endpoint pour évaluer la force d'un mot de passe.
      * GET /api/auth/password-strength?password=xxx
-     * @return WEAK, MEDIUM ou STRONG
      */
     @GetMapping("/password-strength")
     public ResponseEntity<Map<String, Object>> passwordStrength(
             @RequestParam String password) {
-
         String strength = authService.evaluatePasswordStrength(password);
         return ResponseEntity.ok(Map.of("strength", strength));
     }
