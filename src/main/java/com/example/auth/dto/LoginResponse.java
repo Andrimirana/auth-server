@@ -7,7 +7,6 @@ import java.time.LocalDateTime;
  * Contient le token SSO et sa date d'expiration.
  */
 public class LoginResponse {
-
     private String accessToken;
     private LocalDateTime expiresAt;
 

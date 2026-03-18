@@ -4,7 +4,6 @@ package com.example.auth.dto;
  * DTO de la requête d'inscription.
  */
 public class RegisterRequest {
-
     private String email;
     private String password;
     private String passwordConfirm;
