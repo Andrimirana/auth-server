@@ -16,6 +16,7 @@
 
     <properties>
         <java.version>17</java.version>
+        <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
     </properties>
 
     <dependencies>

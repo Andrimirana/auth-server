@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement
  * fragile. Le mot de passe est haché avec BCrypt mais la phase de
  * login reste rejouable si une requête est capturée.
- * Ne jamais utiliser en production sans TP3.</p>
+
  */
 @Entity
 @Table(name = "users")
@@ -22,7 +22,7 @@ public class User {
     @Column(unique = true, nullable = false)
     private String email;
 
-    /** Mot de passe haché BCrypt — plus jamais en clair depuis TP2. */
+    /** Mot de passe haché BCrypt — plus en clair  */
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
