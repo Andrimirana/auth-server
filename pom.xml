@@ -11,12 +11,16 @@
     <groupId>com.example</groupId>
     <artifactId>auth</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>auth</name>
+    <n>auth</n>
     <description>Serveur d'authentification TP1 à TP4</description>
 
     <properties>
         <java.version>17</java.version>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
+        <!-- SonarCloud - remplace par tes vraies valeurs -->
+        <sonar.projectKey>Mirana_auth</sonar.projectKey>
+        <sonar.organization>andrimirana</sonar.organization>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
     </properties>
 
     <dependencies>
@@ -38,11 +42,11 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- H2 pour les tests -->
+        <!-- H2 pour les tests uniquement -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <scope>test</scope>
         </dependency>
 
         <!-- MySQL en production -->
@@ -86,6 +90,7 @@
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -99,6 +104,7 @@
                 </configuration>
             </plugin>
 
+            <!-- JaCoCo - couverture de tests -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -110,12 +116,19 @@
                     </execution>
                     <execution>
                         <id>report</id>
-                        <phase>test</phase>
+                        <phase>verify</phase>
                         <goals>
                             <goal>report</goal>
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+
+            <!-- SonarCloud -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>3.10.0.2594</version>
             </plugin>
         </plugins>
     </build>
