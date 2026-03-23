@@ -23,9 +23,14 @@
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
 
         <!-- SonarCloud -->
-        <sonar.projectKey>Mirana_auth</sonar.projectKey>
+        <sonar.projectKey>Andrimirana_auth-server</sonar.projectKey>
         <sonar.organization>andrimirana</sonar.organization>
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+        <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
+        <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+        <sonar.sources>src/main/java</sonar.sources>
+        <sonar.tests>src/test/java</sonar.tests>
+        <sonar.exclusions>**/dto/**,**/entity/**,**/exception/**</sonar.exclusions>
     </properties>
 
     <dependencies>
