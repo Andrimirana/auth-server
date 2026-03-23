@@ -5,6 +5,7 @@ import com.example.auth.entity.User;
 import com.example.auth.exception.AuthenticationFailedException;
 import com.example.auth.exception.InvalidInputException;
 import com.example.auth.exception.ResourceConflictException;
+import com.example.auth.repository.UserRepository;
 import com.example.auth.service.AuthService;
 import com.example.auth.service.HmacService;
 import com.example.auth.service.PasswordPolicyValidator;
@@ -14,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,6 +36,9 @@ class AuthApplicationTests {
 
     @Autowired
     private PasswordPolicyValidator passwordPolicyValidator;
+
+    @Autowired
+    private UserRepository userRepository;
 
     private static final String VALID_PASSWORD = "Password123!";
     private static final String VALID_EMAIL    = "test@example.com";
@@ -256,5 +261,38 @@ class AuthApplicationTests {
     @Test
     void testPasswordStrengthStrong() {
         assertEquals("STRONG", passwordPolicyValidator.evaluateStrength("Password123!@#"));
+    }
+
+    // Test 19 - Lockout expire correctement après la durée de blocage
+    @Test
+    void testLockoutExpireCorrectement() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+
+        // Provoquer 5 échecs consécutifs pour déclencher le blocage
+        for (int i = 0; i < 5; i++) {
+            LoginRequest bad = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+            bad.setHmac("hmac_faux_" + i);
+            try { authService.login(bad); } catch (AuthenticationFailedException ignored) {}
+        }
+
+        // Vérifier que le compte est bien bloqué
+        LoginRequest blockedReq = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        AuthenticationFailedException locked = assertThrows(
+                AuthenticationFailedException.class,
+                () -> authService.login(blockedReq)
+        );
+        assertTrue(locked.getMessage().contains("bloqué"),
+                "Le compte doit être bloqué après 5 échecs");
+
+        // Simuler l'expiration : on remet lock_until dans le passé via UserRepository
+        User user = userRepository.findByEmail(VALID_EMAIL).orElseThrow();
+        user.setLockUntil(LocalDateTime.now().minusMinutes(5));
+        user.setFailedAttempts(0);
+        userRepository.save(user);
+
+        // Après expiration, la connexion doit fonctionner
+        LoginRequest validReq = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        assertDoesNotThrow(() -> authService.login(validReq),
+                "La connexion doit réussir après expiration du blocage");
     }
 }
