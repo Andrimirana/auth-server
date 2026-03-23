@@ -14,6 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -178,7 +180,7 @@ public class AuthService {
         String expectedHmac;
         try {
             expectedHmac = hmacService.compute(passwordPlain, message);
-        } catch (Exception e) {
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
             logger.error("Erreur calcul HMAC pour : {}", request.getEmail());
             throw new AuthenticationFailedException("Identifiants incorrects");
         }
