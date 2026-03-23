@@ -5,7 +5,9 @@ import org.springframework.stereotype.Service;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 
 /**
@@ -26,9 +28,10 @@ public class HmacService {
      * @param key  clé secrète (le mot de passe utilisateur)
      * @param data message à signer (email:nonce:timestamp)
      * @return signature HMAC en Base64
-     * @throws Exception si l'algorithme HmacSHA256 n'est pas disponible
+     * @throws NoSuchAlgorithmException si l'algorithme HmacSHA256 n'est pas disponible
+     * @throws InvalidKeyException      si la clé est invalide
      */
-    public String compute(String key, String data) throws Exception {
+    public String compute(String key, String data) throws NoSuchAlgorithmException, InvalidKeyException {
         Mac mac = Mac.getInstance("HmacSHA256");
         SecretKeySpec secretKey = new SecretKeySpec(
                 key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"

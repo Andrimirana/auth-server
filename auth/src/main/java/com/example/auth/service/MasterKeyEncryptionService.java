@@ -8,6 +8,7 @@ import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Base64;
 
@@ -35,6 +36,8 @@ public class MasterKeyEncryptionService {
     private static final int    IV_LENGTH    = 12;   // 96 bits — recommandé pour GCM
     private static final int    TAG_LENGTH   = 128;  // bits — tag d'authenticité GCM
     private static final String FORMAT_V1    = "v1";
+    // SecureRandom est thread-safe et coûteux à instancier — réutilisé comme champ
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     /**
      * Clé injectée depuis la variable d'environnement APP_MASTER_KEY.
@@ -90,12 +93,12 @@ public class MasterKeyEncryptionService {
     public String encrypt(String plaintext) {
         try {
             byte[] iv = new byte[IV_LENGTH];
-            new SecureRandom().nextBytes(iv);
+            SECURE_RANDOM.nextBytes(iv);
 
             Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(TAG_LENGTH, iv));
 
-            byte[] ciphertext = cipher.doFinal(plaintext.getBytes());
+            byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
 
             return FORMAT_V1 + ":"
                     + Base64.getEncoder().encodeToString(iv) + ":"
@@ -138,7 +141,7 @@ public class MasterKeyEncryptionService {
             Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(TAG_LENGTH, iv));
 
-            return new String(cipher.doFinal(ciphertext));
+            return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
 
         } catch (Exception e) {
             throw new RuntimeException(

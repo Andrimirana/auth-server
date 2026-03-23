@@ -59,11 +59,14 @@ public class AuthController {
 
     /**
      * Endpoint pour évaluer la force d'un mot de passe.
-     * GET /api/auth/password-strength?password=xxx
+     * POST /api/auth/password-strength
+     * Body JSON : { "password": "xxx" }
+     * Note: POST utilisé intentionnellement pour ne pas exposer le mot de passe dans l'URL.
      */
-    @GetMapping("/password-strength")
+    @PostMapping("/password-strength")
     public ResponseEntity<Map<String, Object>> passwordStrength(
-            @RequestParam String password) {
+            @RequestBody Map<String, String> body) {
+        String password = body.get("password");
         String strength = authService.evaluatePasswordStrength(password);
         return ResponseEntity.ok(Map.of("strength", strength));
     }

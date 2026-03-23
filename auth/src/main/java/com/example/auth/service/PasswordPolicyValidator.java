@@ -3,6 +3,8 @@ package com.example.auth.service;
 import com.example.auth.exception.InvalidInputException;
 import org.springframework.stereotype.Component;
 
+import java.util.regex.Pattern;
+
 /**
  * Validateur de politique de mot de passe pour TP2.
  *
@@ -22,7 +24,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class PasswordPolicyValidator {
 
-    private static final int MIN_LENGTH = 12;
+    private static final int     MIN_LENGTH    = 12;
+    private static final int     STRONG_LENGTH = 16;
+
+    // Patterns pré-compilés pour éviter la recompilation à chaque appel (ReDoS, performance)
+    private static final Pattern HAS_UPPER   = Pattern.compile("[A-Z]");
+    private static final Pattern HAS_LOWER   = Pattern.compile("[a-z]");
+    private static final Pattern HAS_DIGIT   = Pattern.compile("[0-9]");
+    private static final Pattern HAS_SPECIAL = Pattern.compile("[^a-zA-Z0-9]");
 
     /**
      * Valide le mot de passe selon la politique TP2.
@@ -36,22 +45,22 @@ public class PasswordPolicyValidator {
                     "Mot de passe trop court (minimum " + MIN_LENGTH + " caractères)"
             );
         }
-        if (!password.matches(".*[A-Z].*")) {
+        if (!HAS_UPPER.matcher(password).find()) {
             throw new InvalidInputException(
                     "Le mot de passe doit contenir au moins une majuscule"
             );
         }
-        if (!password.matches(".*[a-z].*")) {
+        if (!HAS_LOWER.matcher(password).find()) {
             throw new InvalidInputException(
                     "Le mot de passe doit contenir au moins une minuscule"
             );
         }
-        if (!password.matches(".*[0-9].*")) {
+        if (!HAS_DIGIT.matcher(password).find()) {
             throw new InvalidInputException(
                     "Le mot de passe doit contenir au moins un chiffre"
             );
         }
-        if (!password.matches(".*[^a-zA-Z0-9].*")) {
+        if (!HAS_SPECIAL.matcher(password).find()) {
             throw new InvalidInputException(
                     "Le mot de passe doit contenir au moins un caractère spécial"
             );
@@ -68,11 +77,11 @@ public class PasswordPolicyValidator {
         if (password == null || password.length() < MIN_LENGTH) return "WEAK";
 
         int score = 0;
-        if (password.matches(".*[A-Z].*")) score++;
-        if (password.matches(".*[a-z].*")) score++;
-        if (password.matches(".*[0-9].*")) score++;
-        if (password.matches(".*[^a-zA-Z0-9].*")) score++;
-        if (password.length() >= 16) score++;
+        if (HAS_UPPER.matcher(password).find())   score++;
+        if (HAS_LOWER.matcher(password).find())   score++;
+        if (HAS_DIGIT.matcher(password).find())   score++;
+        if (HAS_SPECIAL.matcher(password).find()) score++;
+        if (password.length() >= STRONG_LENGTH)   score++;
 
         if (score <= 2) return "WEAK";
         if (score <= 3) return "MEDIUM";
