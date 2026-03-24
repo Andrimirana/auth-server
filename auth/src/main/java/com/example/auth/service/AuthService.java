@@ -21,62 +21,52 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * Service principal d'authentification TP4.
+ * Service principal d'authentification TP3.
  *
- * <p><b>Évolution TP3 → TP4 :</b></p>
- * <ul>
- *   <li>À l'inscription : le mot de passe est chiffré AES-GCM via
- *       {@link MasterKeyEncryptionService} avant stockage. Plus jamais de clair en base.</li>
- *   <li>Au login : le mot de passe est déchiffré à la volée pour recalculer le HMAC,
- *       puis immédiatement jeté sans être persisté.</li>
- * </ul>
+ * <p>Le mot de passe ne circule jamais sur le réseau.
+ * Le client envoie une preuve HMAC-SHA256 avec nonce et timestamp.</p>
  *
- * <p>Le protocole HMAC-SHA256 avec nonce et timestamp reste identique à TP3.</p>
+ * <p>À l'inscription : le mot de passe est stocké en clair dans la base
+ * (champ {@code password_encrypted}) pour permettre le recalcul HMAC au login.</p>
  *
- * <p><b>Note pédagogique TP4 :</b> Le chiffrement réversible est accepté ici pour
- * permettre le protocole HMAC du TP3. En production pure, on éviterait tout stockage
- * réversible du mot de passe et on utiliserait OAuth2/OIDC.</p>
+ * <p><b>Note pédagogique TP3 :</b> Le stockage en clair est accepté ici pour
+ * permettre le protocole HMAC. Le chiffrement via Master Key sera ajouté au TP4.</p>
  *
- * @author Étudiant CDWFS
- * @version 4.0
+ * @version 3.0
  */
 @Service
 public class AuthService {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
-    private static final int  MAX_ATTEMPTS           = 5;
-    private static final int  LOCK_MINUTES           = 2;
+    private static final int  MAX_ATTEMPTS             = 5;
+    private static final int  LOCK_MINUTES             = 2;
     private static final long TIMESTAMP_WINDOW_SECONDS = 60L;
 
-    private final UserRepository           userRepository;
-    private final AuthNonceRepository      nonceRepository;
-    private final HmacService              hmacService;
-    private final TokenService             tokenService;
-    private final PasswordPolicyValidator  passwordPolicyValidator;
-    private final MasterKeyEncryptionService encryptionService;  // ← NOUVEAU TP4
+    private final UserRepository          userRepository;
+    private final AuthNonceRepository     nonceRepository;
+    private final HmacService             hmacService;
+    private final TokenService            tokenService;
+    private final PasswordPolicyValidator passwordPolicyValidator;
 
     public AuthService(UserRepository userRepository,
                        AuthNonceRepository nonceRepository,
                        HmacService hmacService,
                        TokenService tokenService,
-                       PasswordPolicyValidator passwordPolicyValidator,
-                       MasterKeyEncryptionService encryptionService) {
+                       PasswordPolicyValidator passwordPolicyValidator) {
         this.userRepository          = userRepository;
         this.nonceRepository         = nonceRepository;
         this.hmacService             = hmacService;
         this.tokenService            = tokenService;
         this.passwordPolicyValidator = passwordPolicyValidator;
-        this.encryptionService       = encryptionService;
     }
 
     /**
      * Inscrit un nouvel utilisateur.
      *
-     * <p><b>TP4 :</b> Le mot de passe est chiffré AES-GCM avant stockage.
-     * La valeur en clair n'est jamais persistée ni loggée.</p>
+     * <p>Le mot de passe est stocké en clair pour permettre le protocole HMAC au login.</p>
      *
      * @param email           email de l'utilisateur
-     * @param password        mot de passe en clair (sera chiffré avant stockage)
+     * @param password        mot de passe en clair
      * @param passwordConfirm confirmation du mot de passe
      * @return l'utilisateur créé
      * @throws InvalidInputException     si données invalides
@@ -100,9 +90,8 @@ public class AuthService {
             throw new ResourceConflictException("Email déjà utilisé");
         }
 
-        // TP4 : chiffrement AES-GCM — le mot de passe en clair n'est pas persisté
-        String encrypted = encryptionService.encrypt(password);
-        User user = new User(email, encrypted);
+        // TP3 : stockage en clair pour permettre le recalcul HMAC au login
+        User user = new User(email, password);
         userRepository.save(user);
 
         logger.info("Inscription réussie pour : {}", email);
@@ -112,16 +101,13 @@ public class AuthService {
     /**
      * Authentifie via le protocole HMAC-SHA256 avec nonce et timestamp.
      *
-     * <p><b>TP4 :</b> Le mot de passe chiffré est déchiffré à la volée pour
-     * recalculer le HMAC, puis la valeur en clair est immédiatement abandonnée.</p>
-     *
      * <p>Vérifications dans l'ordre :</p>
      * <ol>
      *   <li>Email existe</li>
      *   <li>Compte non verrouillé (anti brute-force)</li>
      *   <li>Timestamp dans la fenêtre ±60 secondes</li>
      *   <li>Nonce non déjà utilisé (anti-rejeu)</li>
-     *   <li>Déchiffrement du mot de passe + recalcul HMAC</li>
+     *   <li>Recalcul HMAC avec le mot de passe stocké</li>
      *   <li>Comparaison HMAC en temps constant</li>
      * </ol>
      *
@@ -166,17 +152,9 @@ public class AuthService {
         // Enregistrer le nonce immédiatement pour bloquer tout rejeu concurrent
         nonceRepository.save(new AuthNonce(user, request.getNonce()));
 
-        // 5. TP4 : Déchiffrer le mot de passe pour recalculer le HMAC
-        String passwordPlain;
-        try {
-            passwordPlain = encryptionService.decrypt(user.getPasswordEncrypted());
-        } catch (Exception e) {
-            logger.error("Erreur déchiffrement pour : {}", request.getEmail());
-            throw new AuthenticationFailedException("Identifiants incorrects");
-        }
-
-        // Recalculer le HMAC attendu
-        String message = request.getEmail() + ":" + request.getNonce() + ":" + request.getTimestamp();
+        // 5. Recalculer le HMAC avec le mot de passe stocké en clair
+        String passwordPlain = user.getPasswordEncrypted(); // TP3 : stocké en clair
+        String message       = request.getEmail() + ":" + request.getNonce() + ":" + request.getTimestamp();
         String expectedHmac;
         try {
             expectedHmac = hmacService.compute(passwordPlain, message);
