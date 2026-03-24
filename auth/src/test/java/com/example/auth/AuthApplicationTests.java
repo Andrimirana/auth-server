@@ -11,7 +11,10 @@ import com.example.auth.service.HmacService;
 import com.example.auth.service.PasswordPolicyValidator;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -19,12 +22,15 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Tests unitaires pour le serveur d'authentification TP3.
+ * Tests d'intégration pour le serveur d'authentification TP3.
  * Protocole HMAC-SHA256 avec nonce et timestamp.
  */
 @SpringBootTest
+@AutoConfigureMockMvc
 @Transactional
 class AuthApplicationTests {
 
@@ -39,6 +45,9 @@ class AuthApplicationTests {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private MockMvc mockMvc;
 
     private static final String VALID_PASSWORD = "Password123!";
     private static final String VALID_EMAIL    = "test@example.com";
@@ -272,7 +281,13 @@ class AuthApplicationTests {
         for (int i = 0; i < 5; i++) {
             LoginRequest bad = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
             bad.setHmac("hmac_faux_" + i);
-            try { authService.login(bad); } catch (AuthenticationFailedException ignored) {}
+            try {
+                authService.login(bad);
+            } catch (AuthenticationFailedException ignored) {
+                // Intentionnel : l'exception est attendue à chaque itération.
+                // Son seul effet est d'incrémenter le compteur d'échecs côté serveur
+                // afin de déclencher le blocage du compte après 5 tentatives.
+            }
         }
 
         // Vérifier que le compte est bien bloqué
@@ -294,5 +309,174 @@ class AuthApplicationTests {
         LoginRequest validReq = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
         assertDoesNotThrow(() -> authService.login(validReq),
                 "La connexion doit réussir après expiration du blocage");
+    }
+
+    // ========== TESTS CONTRÔLEUR AuthController ==========
+
+    // Test 20 - POST /api/auth/register via HTTP → 200
+    @Test
+    void testRegisterEndpointOk() throws Exception {
+        String json = "{\"email\":\"ctrl@example.com\","
+                + "\"password\":\"Password123!\","
+                + "\"passwordConfirm\":\"Password123!\"}";
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("ctrl@example.com"))
+                .andExpect(jsonPath("$.message").value("Inscription réussie"));
+    }
+
+    // Test 21 - POST /api/auth/register doublon → 409
+    @Test
+    void testRegisterEndpointDoublon() throws Exception {
+        String json = "{\"email\":\"ctrl2@example.com\","
+                + "\"password\":\"Password123!\","
+                + "\"passwordConfirm\":\"Password123!\"}";
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isConflict());
+    }
+
+    // Test 22 - POST /api/auth/password-strength → 200
+    @Test
+    void testPasswordStrengthEndpoint() throws Exception {
+        mockMvc.perform(post("/api/auth/password-strength")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"Password123!\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.strength").value("STRONG"));
+    }
+
+    // Test 23 - POST /api/auth/login HMAC invalide → 401
+    @Test
+    void testLoginEndpointHmacInvalide() throws Exception {
+        String regJson = "{\"email\":\"loginctrl@example.com\","
+                + "\"password\":\"Password123!\","
+                + "\"passwordConfirm\":\"Password123!\"}";
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(regJson))
+                .andExpect(status().isOk());
+
+        long ts = Instant.now().getEpochSecond();
+        String loginJson = "{\"email\":\"loginctrl@example.com\","
+                + "\"nonce\":\"nonce-ctrl\","
+                + "\"timestamp\":" + ts + ","
+                + "\"hmac\":\"hmac_invalide\"}";
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginJson))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ========== TESTS CONTRÔLEUR UserController ==========
+
+    // Test 24 - GET /api/me sans header Authorization → 401
+    @Test
+    void testMeSansAuthorization() throws Exception {
+        mockMvc.perform(get("/api/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 25 - GET /api/me avec header mal formé → 401
+    @Test
+    void testMeHeaderMalForme() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Basic not-bearer"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 26 - GET /api/me avec token invalide → 401
+    @Test
+    void testMeTokenInvalide() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Bearer token-inexistant"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 27 - GET /api/me avec token valide → 200
+    @Test
+    void testMeTokenValide() throws Exception {
+        // Inscription + login via HTTP pour obtenir un vrai token
+        String regJson = "{\"email\":\"me@example.com\","
+                + "\"password\":\"Password123!\","
+                + "\"passwordConfirm\":\"Password123!\"}";
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(regJson))
+                .andExpect(status().isOk());
+
+        String nonce = UUID.randomUUID().toString();
+        long ts = Instant.now().getEpochSecond();
+        String message = "me@example.com:" + nonce + ":" + ts;
+        String hmac = hmacService.compute("Password123!", message);
+        String loginJson = "{\"email\":\"me@example.com\","
+                + "\"nonce\":\"" + nonce + "\","
+                + "\"timestamp\":" + ts + ","
+                + "\"hmac\":\"" + hmac + "\"}";
+
+        String body = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginJson))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        // Extraire le token du JSON retourné
+        String token = body.split("\"accessToken\":\"")[1].split("\"")[0];
+
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value("me@example.com"));
+    }
+
+    // ========== TESTS BRANCHES MANQUANTES PasswordPolicyValidator ==========
+
+    // Test 28 - evaluateStrength : force MEDIUM (score = 3)
+    @Test
+    void testPasswordStrengthMedium() {
+        // Majuscule + minuscule + chiffre, pas de spécial, longueur < 16
+        assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("Password1234"));
+    }
+
+    // Test 29 - validate : mot de passe null
+    @Test
+    void testValidateNull() {
+        assertThrows(InvalidInputException.class,
+                () -> passwordPolicyValidator.validate(null));
+    }
+
+    // Test 30 - validate : pas de majuscule
+    @Test
+    void testValidateSansMajuscule() {
+        assertThrows(InvalidInputException.class,
+                () -> passwordPolicyValidator.validate("password123!abcdef"));
+    }
+
+    // Test 31 - validate : pas de minuscule
+    @Test
+    void testValidateSansMinuscule() {
+        assertThrows(InvalidInputException.class,
+                () -> passwordPolicyValidator.validate("PASSWORD123!ABCDEF"));
+    }
+
+    // Test 32 - validate : pas de chiffre
+    @Test
+    void testValidateSansChiffre() {
+        assertThrows(InvalidInputException.class,
+                () -> passwordPolicyValidator.validate("PasswordAbcDef!xyz"));
+    }
+
+    // Test 33 - validate : pas de caractère spécial
+    @Test
+    void testValidateSansSpecial() {
+        assertThrows(InvalidInputException.class,
+                () -> passwordPolicyValidator.validate("Password123AbcDef456"));
     }
 }

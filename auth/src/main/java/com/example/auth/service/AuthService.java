@@ -21,25 +21,48 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
- * Service principal d'authentification TP3.
+ * Service principal d'authentification — protocole HMAC-SHA256 avec nonce et timestamp (TP3).
  *
- * <p>Le mot de passe ne circule jamais sur le réseau.
- * Le client envoie une preuve HMAC-SHA256 avec nonce et timestamp.</p>
+ * <h2>Principe du protocole</h2>
+ * <p>Le mot de passe ne circule <b>jamais</b> sur le réseau.
+ * Le client prouve qu'il connaît le secret en calculant :</p>
+ * <pre>
+ *   hmac = HMAC_SHA256(key = password, data = email:nonce:timestamp)
+ * </pre>
+ * <p>Le serveur recalcule la même signature et compare en <b>temps constant</b>
+ * pour éviter les attaques temporelles.</p>
  *
- * <p>À l'inscription : le mot de passe est stocké en clair dans la base
- * (champ {@code password_encrypted}) pour permettre le recalcul HMAC au login.</p>
+ * <h2>Évolution par TP</h2>
+ * <ul>
+ *   <li><b>TP1</b> : mot de passe en clair, authentification basique. Cette implémentation
+ *       est volontairement dangereuse et ne doit jamais être utilisée en production.</li>
+ *   <li><b>TP2</b> : BCrypt + politique de mot de passe + anti brute-force.
+ *       TP2 améliore le stockage mais ne protège pas encore contre le rejeu.</li>
+ *   <li><b>TP3</b> : protocole HMAC + nonce + timestamp. Le mot de passe est stocké
+ *       en clair pour permettre le recalcul HMAC (accepté à des fins pédagogiques).</li>
+ * </ul>
  *
- * <p><b>Note pédagogique TP3 :</b> Le stockage en clair est accepté ici pour
- * permettre le protocole HMAC. Le chiffrement via Master Key sera ajouté au TP4.</p>
+ * <p><b>Limites pédagogiques TP3 :</b> Le stockage en clair est intentionnellement conservé.
+ * En industrie, on utiliserait un hash non réversible et un protocole de dérivation de clé
+ * (ex. PBKDF2, Argon2) pour éviter de stocker le mot de passe récupérable.</p>
  *
+ * @see HmacService
+ * @see TokenService
+ * @see PasswordPolicyValidator
  * @version 3.0
  */
 @Service
 public class AuthService {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
+
+    /** Nombre maximal de tentatives échouées avant verrouillage du compte. */
     private static final int  MAX_ATTEMPTS             = 5;
+
+    /** Durée de verrouillage en minutes après dépassement du seuil d'échecs. */
     private static final int  LOCK_MINUTES             = 2;
+
+    /** Fenêtre de tolérance en secondes pour le timestamp de la requête (±60 s). */
     private static final long TIMESTAMP_WINDOW_SECONDS = 60L;
 
     private final UserRepository          userRepository;
@@ -48,6 +71,15 @@ public class AuthService {
     private final TokenService            tokenService;
     private final PasswordPolicyValidator passwordPolicyValidator;
 
+    /**
+     * Injecte toutes les dépendances via le constructeur (injection recommandée Spring).
+     *
+     * @param userRepository          repository des utilisateurs
+     * @param nonceRepository         repository des nonces anti-rejeu
+     * @param hmacService             service de calcul et vérification HMAC
+     * @param tokenService            service de gestion des tokens SSO
+     * @param passwordPolicyValidator validateur de la politique de mot de passe
+     */
     public AuthService(UserRepository userRepository,
                        AuthNonceRepository nonceRepository,
                        HmacService hmacService,
@@ -159,7 +191,7 @@ public class AuthService {
         try {
             expectedHmac = hmacService.compute(passwordPlain, message);
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {
-            logger.error("Erreur calcul HMAC pour : {}", request.getEmail());
+            logger.error("Erreur calcul HMAC pour : {}", request.getEmail(), e);
             throw new AuthenticationFailedException("Identifiants incorrects");
         }
 
@@ -208,3 +240,4 @@ public class AuthService {
         return passwordPolicyValidator.evaluateStrength(password);
     }
 }
+
