@@ -40,16 +40,17 @@ import java.util.Optional;
  *       TP2 améliore le stockage mais ne protège pas encore contre le rejeu.</li>
  *   <li><b>TP3</b> : protocole HMAC + nonce + timestamp. Le mot de passe est stocké
  *       en clair pour permettre le recalcul HMAC (accepté à des fins pédagogiques).</li>
+ *   <li><b>TP4</b> : les mots de passe sont désormais chiffrés en base via AES-256-GCM
+ *       grâce à une Master Key injectée par variable d'environnement ({@code APP_MASTER_KEY}).
+ *       Le champ {@code password_encrypted} contient la valeur au format
+ *       {@code v1:Base64(iv):Base64(ciphertext)}. La clé ne doit jamais être dans le code.</li>
  * </ul>
- *
- * <p><b>Limites pédagogiques TP3 :</b> Le stockage en clair est intentionnellement conservé.
- * En industrie, on utiliserait un hash non réversible et un protocole de dérivation de clé
- * (ex. PBKDF2, Argon2) pour éviter de stocker le mot de passe récupérable.</p>
  *
  * @see HmacService
  * @see TokenService
  * @see PasswordPolicyValidator
- * @version 3.0
+ * @see MasterKeyService
+ * @version 4.0
  */
 @Service
 public class AuthService {
@@ -70,6 +71,7 @@ public class AuthService {
     private final HmacService             hmacService;
     private final TokenService            tokenService;
     private final PasswordPolicyValidator passwordPolicyValidator;
+    private final MasterKeyService        masterKeyService;
 
     /**
      * Injecte toutes les dépendances via le constructeur (injection recommandée Spring).
@@ -79,17 +81,20 @@ public class AuthService {
      * @param hmacService             service de calcul et vérification HMAC
      * @param tokenService            service de gestion des tokens SSO
      * @param passwordPolicyValidator validateur de la politique de mot de passe
+     * @param masterKeyService        service de chiffrement AES-256-GCM (TP4)
      */
     public AuthService(UserRepository userRepository,
                        AuthNonceRepository nonceRepository,
                        HmacService hmacService,
                        TokenService tokenService,
-                       PasswordPolicyValidator passwordPolicyValidator) {
+                       PasswordPolicyValidator passwordPolicyValidator,
+                       MasterKeyService masterKeyService) {
         this.userRepository          = userRepository;
         this.nonceRepository         = nonceRepository;
         this.hmacService             = hmacService;
         this.tokenService            = tokenService;
         this.passwordPolicyValidator = passwordPolicyValidator;
+        this.masterKeyService        = masterKeyService;
     }
 
     /**
@@ -122,8 +127,8 @@ public class AuthService {
             throw new ResourceConflictException("Email déjà utilisé");
         }
 
-        // TP3 : stockage en clair pour permettre le recalcul HMAC au login
-        User user = new User(email, password);
+        // TP4 : chiffrement AES-256-GCM du mot de passe avant stockage
+        User user = new User(email, masterKeyService.encrypt(password));
         userRepository.save(user);
 
         logger.info("Inscription réussie pour : {}", email);
@@ -184,8 +189,8 @@ public class AuthService {
         // Enregistrer le nonce immédiatement pour bloquer tout rejeu concurrent
         nonceRepository.save(new AuthNonce(user, request.getNonce()));
 
-        // 5. Recalculer le HMAC avec le mot de passe stocké en clair
-        String passwordPlain = user.getPasswordEncrypted(); // TP3 : stocké en clair
+        // 5. Déchiffrer le mot de passe et recalculer le HMAC (TP4 : AES-GCM)
+        String passwordPlain = masterKeyService.decrypt(user.getPasswordEncrypted());
         String message       = request.getEmail() + ":" + request.getNonce() + ":" + request.getTimestamp();
         String expectedHmac;
         try {
