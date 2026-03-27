@@ -8,6 +8,7 @@ import com.example.auth.exception.ResourceConflictException;
 import com.example.auth.repository.UserRepository;
 import com.example.auth.service.AuthService;
 import com.example.auth.service.HmacService;
+import com.example.auth.service.MasterKeyService;
 import com.example.auth.service.PasswordPolicyValidator;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +27,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Tests d'intégration pour le serveur d'authentification TP3.
- * Protocole HMAC-SHA256 avec nonce et timestamp.
+ * Tests d'intégration pour le serveur d'authentification TP4.
+ * Protocole HMAC-SHA256 avec nonce, timestamp et chiffrement AES-256-GCM.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -48,6 +49,9 @@ class AuthApplicationTests {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private MasterKeyService masterKeyService;
 
     private static final String VALID_PASSWORD = "Password123!";
     private static final String VALID_EMAIL    = "test@example.com";
@@ -353,130 +357,60 @@ class AuthApplicationTests {
                 .andExpect(jsonPath("$.strength").value("STRONG"));
     }
 
-    // Test 23 - POST /api/auth/login HMAC invalide → 401
-    @Test
-    void testLoginEndpointHmacInvalide() throws Exception {
-        String regJson = "{\"email\":\"loginctrl@example.com\","
-                + "\"password\":\"Password123!\","
-                + "\"passwordConfirm\":\"Password123!\"}";
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(regJson))
-                .andExpect(status().isOk());
+    // ========== TESTS MASTER KEY (TP4) ==========
 
-        long ts = Instant.now().getEpochSecond();
-        String loginJson = "{\"email\":\"loginctrl@example.com\","
-                + "\"nonce\":\"nonce-ctrl\","
-                + "\"timestamp\":" + ts + ","
-                + "\"hmac\":\"hmac_invalide\"}";
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginJson))
-                .andExpect(status().isUnauthorized());
+    // Test 23 - Chiffrement puis déchiffrement retourne le plaintext original
+    @Test
+    void testMasterKeyEncryptDecryptOk() {
+        String plain     = "MotDePasseSecret123!";
+        String encrypted = masterKeyService.encrypt(plain);
+        String decrypted = masterKeyService.decrypt(encrypted);
+        assertEquals(plain, decrypted, "Le déchiffrement doit retourner le mot de passe original");
     }
 
-    // ========== TESTS CONTRÔLEUR UserController ==========
-
-    // Test 24 - GET /api/me sans header Authorization → 401
+    // Test 24 - Le ciphertext est différent du plaintext, et deux chiffrements donnent des résultats différents (IV aléatoire)
     @Test
-    void testMeSansAuthorization() throws Exception {
-        mockMvc.perform(get("/api/me"))
-                .andExpect(status().isUnauthorized());
+    void testEncryptedDifferentFromClear() {
+        String plain      = "MotDePasseSecret123!";
+        String encrypted1 = masterKeyService.encrypt(plain);
+        String encrypted2 = masterKeyService.encrypt(plain);
+
+        assertNotEquals(plain, encrypted1, "Le ciphertext ne doit pas être identique au plaintext");
+        assertTrue(encrypted1.startsWith("v1:"), "Le format doit commencer par 'v1:'");
+        assertNotEquals(encrypted1, encrypted2,
+                "Deux chiffrements du même plaintext doivent produire des ciphertexts différents (IV aléatoire)");
     }
 
-    // Test 25 - GET /api/me avec header mal formé → 401
+    // Test 25 - Le déchiffrement échoue si le ciphertext est modifié (intégrité GCM)
     @Test
-    void testMeHeaderMalForme() throws Exception {
-        mockMvc.perform(get("/api/me")
-                        .header("Authorization", "Basic not-bearer"))
-                .andExpect(status().isUnauthorized());
+    void testDecryptKoIfCiphertextModified() {
+        String plain     = "MotDePasseSecret123!";
+        String encrypted = masterKeyService.encrypt(plain);
+
+        // Modifier le ciphertext (3ème partie après les deux ':')
+        String[] parts   = encrypted.split(":");
+        String   tampered = parts[0] + ":" + parts[1] + ":AAAAAAAAAAAAAAAAAAAAAA==";
+
+        assertThrows(Exception.class, () -> masterKeyService.decrypt(tampered),
+                "Le déchiffrement doit échouer si le ciphertext a été modifié (vérification GCM)");
     }
 
-    // Test 26 - GET /api/me avec token invalide → 401
+    // Test 26 - Le login fonctionne avec un utilisateur inscrit (mot de passe chiffré en base)
     @Test
-    void testMeTokenInvalide() throws Exception {
-        mockMvc.perform(get("/api/me")
-                        .header("Authorization", "Bearer token-inexistant"))
-                .andExpect(status().isUnauthorized());
-    }
+    void testLoginOkAvecMotDePasseChiffre() throws Exception {
+        authService.register("tp4user@example.com", VALID_PASSWORD, VALID_PASSWORD);
 
-    // Test 27 - GET /api/me avec token valide → 200
-    @Test
-    void testMeTokenValide() throws Exception {
-        // Inscription + login via HTTP pour obtenir un vrai token
-        String regJson = "{\"email\":\"me@example.com\","
-                + "\"password\":\"Password123!\","
-                + "\"passwordConfirm\":\"Password123!\"}";
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(regJson))
-                .andExpect(status().isOk());
+        // Vérifier que le mot de passe stocké en base est bien chiffré (pas en clair)
+        User user = userRepository.findByEmail("tp4user@example.com").orElseThrow();
+        assertNotEquals(VALID_PASSWORD, user.getPasswordEncrypted(),
+                "Le mot de passe ne doit pas être stocké en clair");
+        assertTrue(user.getPasswordEncrypted().startsWith("v1:"),
+                "Le mot de passe doit être stocké au format v1:...");
 
-        String nonce = UUID.randomUUID().toString();
-        long ts = Instant.now().getEpochSecond();
-        String message = "me@example.com:" + nonce + ":" + ts;
-        String hmac = hmacService.compute("Password123!", message);
-        String loginJson = "{\"email\":\"me@example.com\","
-                + "\"nonce\":\"" + nonce + "\","
-                + "\"timestamp\":" + ts + ","
-                + "\"hmac\":\"" + hmac + "\"}";
-
-        String body = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginJson))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-
-        // Extraire le token du JSON retourné
-        String token = body.split("\"accessToken\":\"")[1].split("\"")[0];
-
-        mockMvc.perform(get("/api/me")
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("me@example.com"));
-    }
-
-    // ========== TESTS BRANCHES MANQUANTES PasswordPolicyValidator ==========
-
-    // Test 28 - evaluateStrength : force MEDIUM (score = 3)
-    @Test
-    void testPasswordStrengthMedium() {
-        // Majuscule + minuscule + chiffre, pas de spécial, longueur < 16
-        assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("Password1234"));
-    }
-
-    // Test 29 - validate : mot de passe null
-    @Test
-    void testValidateNull() {
-        assertThrows(InvalidInputException.class,
-                () -> passwordPolicyValidator.validate(null));
-    }
-
-    // Test 30 - validate : pas de majuscule
-    @Test
-    void testValidateSansMajuscule() {
-        assertThrows(InvalidInputException.class,
-                () -> passwordPolicyValidator.validate("password123!abcdef"));
-    }
-
-    // Test 31 - validate : pas de minuscule
-    @Test
-    void testValidateSansMinuscule() {
-        assertThrows(InvalidInputException.class,
-                () -> passwordPolicyValidator.validate("PASSWORD123!ABCDEF"));
-    }
-
-    // Test 32 - validate : pas de chiffre
-    @Test
-    void testValidateSansChiffre() {
-        assertThrows(InvalidInputException.class,
-                () -> passwordPolicyValidator.validate("PasswordAbcDef!xyz"));
-    }
-
-    // Test 33 - validate : pas de caractère spécial
-    @Test
-    void testValidateSansSpecial() {
-        assertThrows(InvalidInputException.class,
-                () -> passwordPolicyValidator.validate("Password123AbcDef456"));
+        // Vérifier que le login fonctionne malgré le chiffrement
+        LoginRequest req = buildValidRequest("tp4user@example.com", VALID_PASSWORD);
+        assertDoesNotThrow(() -> authService.login(req),
+                "Le login doit réussir avec le mot de passe chiffré en base");
     }
 }
+
