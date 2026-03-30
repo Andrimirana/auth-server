@@ -20,17 +20,39 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
  * </ul>
  *
  * <p>Les en-têtes de sécurité HTTP sont activés pour protéger les clients.</p>
+ *
+ * @see com.example.auth.service.AuthService
+ * @see com.example.auth.service.TokenService
+ * @version 3.0
  */
 @Configuration
 public class SecurityConfig {
 
     /**
-     * Configure la chaîne de filtres de sécurité.
+     * Configure la chaîne de filtres de sécurité Spring Security.
      *
-     * <p>CSRF désactivé intentionnellement : API REST stateless sans session ni cookie.
-     * Protection contre les rejeux assurée par le protocole HMAC + nonce + timestamp.</p>
+     * <p>Décisions de configuration :</p>
+     * <ul>
+     *   <li><b>CSRF désactivé</b> intentionnellement : l'API est stateless,
+     *       aucune session ni cookie de session n'est utilisé. La protection
+     *       anti-rejeu est assurée par le nonce + fenêtre de timestamp du protocole HMAC.</li>
+     *   <li><b>Stateless</b> : aucune session HTTP créée ({@code STATELESS}).</li>
+     *   <li><b>En-têtes sécurité</b> : HSTS, X-Content-Type-Options,
+     *       X-Frame-Options (DENY), Referrer-Policy.</li>
+     *   <li><b>Autorisation ouverte</b> : toutes les routes sont accessibles ;
+     *       l'authentification est gérée par notre propre logique dans
+     *       {@link com.example.auth.service.AuthService} et
+     *       {@link com.example.auth.service.TokenService}.</li>
+     * </ul>
+     *
+     * @param http objet de configuration Spring Security
+     * @return la chaîne de filtres configurée
+     * @throws Exception si la configuration échoue
      */
     @Bean
+    @SuppressWarnings("java:S4502") // CSRF désactivé intentionnellement : API REST stateless (sans session ni cookie).
+                                    // La protection anti-rejeu est assurée par le protocole HMAC-SHA256 + nonce + fenêtre de timestamp.
+                                    // Aucun formulaire HTML ni cookie de session : le vecteur d'attaque CSRF ne s'applique pas.
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
                 // CSRF désactivé intentionnellement : API REST stateless (pas de session/cookie)

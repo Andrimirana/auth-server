@@ -1,4 +1,4 @@
-# Serveur d'Authentification — TP1 à TP4
+# Serveur d'Authentification — TP1 à TP5
 
 Projet individuel — Parcours CDWFS  
 API REST sécurisée construite progressivement avec Java, Spring Boot et MySQL.
@@ -74,7 +74,8 @@ mvn exec:java -Dexec.mainClass="org.example.Main"
 | POST | /api/auth/register | Inscription |
 | POST | /api/auth/login | Connexion HMAC-SHA256 |
 | GET | /api/me | Route protégée (Bearer token) |
-| GET | /api/auth/password-strength?password=xxx | Force du mot de passe |
+| POST | /api/auth/password-strength | Force du mot de passe |
+| PUT | /api/auth/change-password | Changement de mot de passe (TP5, Bearer token requis) |
 
 ---
 

@@ -1,3 +1,19 @@
+# TP5 — Pipeline CI/CD GitHub Actions
+#
+# Ce workflow effectue automatiquement :
+#   1. Récupération du code (checkout)
+#   2. Installation du JDK 17
+#   3. Mise en cache Maven
+#   4. Build + Tests JUnit (JaCoCo)   → BLOQUE si un test échoue
+#   5. Analyse SonarCloud              → BLOQUE si Quality Gate rouge
+#   6. Construction image Docker       → BLOQUE si le build Docker échoue
+#
+# Secrets à configurer dans GitHub → Settings → Secrets and variables → Actions :
+#   SONAR_TOKEN          : token SonarCloud (obligatoire)
+#   SONAR_PROJECT_KEY    : optionnel, déjà défini dans pom.xml
+#   SONAR_ORGANIZATION   : optionnel, déjà défini dans pom.xml
+#   APP_MASTER_KEY       : clé de chiffrement (optionnel, fallback test utilisé)
+
 name: CI - Build, Test, SonarCloud and Docker
 
 on:
@@ -13,11 +29,11 @@ jobs:
 
     steps:
 
-      # 1. Checkout du code source
+      # 1. Checkout du code source (historique complet requis par SonarCloud)
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # Requis par SonarCloud pour l'analyse de branches
+          fetch-depth: 0
 
       # 2. Installation JDK 17
       - name: Set up JDK 17
@@ -26,7 +42,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Cache Maven (accélère les builds)
+      # 3. Cache Maven (accélère les builds suivants)
       - name: Cache Maven packages
         uses: actions/cache@v4
         with:
@@ -35,28 +51,36 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # 4. Build, Tests & rapport JaCoCo
-      #    Fallback : clé de test utilisée si le secret GitHub n'est pas défini
+      # 4. Build, Tests JUnit & rapport JaCoCo
+      #    - H2 en mémoire : aucune dépendance MySQL requise
+      #    - Fallback : clé de test si secret GitHub non défini
+      #    - BLOQUE automatiquement si un test échoue
       - name: Build & Run Tests
         working-directory: ./auth
         env:
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
-        run: mvn -B verify
+        run: ./mvnw -B verify
 
-      # 5. Analyse SonarCloud (bloque si Quality Gate rouge)
-      #    sonar.projectKey / sonar.organization / sonar.host.url définis dans pom.xml
-      #    SONAR_TOKEN lu automatiquement depuis la variable d'environnement
+      # 5. Analyse SonarCloud
+      #    - sonar.projectKey / sonar.organization / sonar.host.url définis dans pom.xml
+      #    - sonar.qualitygate.wait=true : BLOQUE si Quality Gate rouge
       - name: SonarCloud Analysis
         working-directory: ./auth
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
-        run: mvn -B sonar:sonar -Dsonar.qualitygate.wait=true
+        run: ./mvnw -B sonar:sonar -Dsonar.qualitygate.wait=true
 
       # 6. Build de l'image Docker (TP5)
-      #    Échoue si le Dockerfile est invalide ou si le build plante
+      #    - BLOQUE si le Dockerfile est invalide ou si le build échoue
+      #    - L'image est taguée avec le SHA du commit pour la traçabilité
       - name: Build Docker image
         working-directory: ./auth
-        run: docker build -t cdwfs-auth-app .
+        run: docker build -t cdwfs-auth-app:${{ github.sha }} .
 
+      # 7. Tag latest sur la branche main (pour faciliter le déploiement)
+      - name: Tag Docker image as latest (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: ./auth
+        run: docker tag cdwfs-auth-app:${{ github.sha }} cdwfs-auth-app:latest

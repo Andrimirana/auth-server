@@ -24,9 +24,9 @@ param(
 )
 
 # ── Couleurs ─────────────────────────────────────────────────────────────────
-function Write-Step  { param($msg) Write-Host "▶  $msg" -ForegroundColor Cyan }
-function Write-OK    { param($msg) Write-Host "✅ $msg" -ForegroundColor Green }
-function Write-Error2 { param($msg) Write-Host "❌ $msg" -ForegroundColor Red }
+function Write-Step  { param($msg) Write-Host "  $msg" -ForegroundColor Cyan }
+function Write-OK    { param($msg) Write-Host " $msg" -ForegroundColor Green }
+function Write-Error2 { param($msg) Write-Host " $msg" -ForegroundColor Red }
 
 Write-Host ""
 Write-Host "╔══════════════════════════════════════════════════════╗" -ForegroundColor Yellow
