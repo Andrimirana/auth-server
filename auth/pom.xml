@@ -31,6 +31,8 @@
         <sonar.sources>src/main/java</sonar.sources>
         <sonar.tests>src/test/java</sonar.tests>
         <sonar.exclusions>**/dto/**,**/entity/**,**/exception/**</sonar.exclusions>
+        <!-- AuthApplication.main() non testable ; repository = interfaces JPA sans code mesurable -->
+        <sonar.coverage.exclusions>**/AuthApplication.java,**/repository/**</sonar.coverage.exclusions>
     </properties>
 
     <dependencies>

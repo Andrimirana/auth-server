@@ -412,5 +412,85 @@ class AuthApplicationTests {
         assertDoesNotThrow(() -> authService.login(req),
                 "Le login doit réussir avec le mot de passe chiffré en base");
     }
+
+    // ========== TESTS USERCONTROLLER (/api/me via MockMvc) ==========
+
+    // Test 28 - GET /api/me avec Bearer token valide → 200 + email
+    @Test
+    void testApiMeAvecTokenBearer() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Bearer " + response.getAccessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value(VALID_EMAIL))
+                .andExpect(jsonPath("$.message").value("Accès autorisé"));
+    }
+
+    // Test 29 - GET /api/me sans header Authorization → 401
+    @Test
+    void testApiMeSansHeaderAuthorization() throws Exception {
+        mockMvc.perform(get("/api/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 30 - GET /api/me avec préfixe non-Bearer (Basic) → 401
+    @Test
+    void testApiMeAvecPrefixeNonBearer() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Basic dXNlcjpwYXNz"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 31 - GET /api/me avec token Bearer invalide → 401
+    @Test
+    void testApiMeAvecTokenBearerinvalide() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Bearer token_invalide_xyz"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ========== TESTS POLITIQUE MOT DE PASSE — branches manquantes ==========
+
+    // Test 32 - validate() sans majuscule → InvalidInputException
+    @Test
+    void testValidateSansMajuscule() {
+        assertThrows(InvalidInputException.class, () ->
+                authService.register("u1@test.com", "lowercase12345!!", "lowercase12345!!")
+        );
+    }
+
+    // Test 33 - validate() sans minuscule → InvalidInputException
+    @Test
+    void testValidateSansMinuscule() {
+        assertThrows(InvalidInputException.class, () ->
+                authService.register("u2@test.com", "UPPERCASE12345!!", "UPPERCASE12345!!")
+        );
+    }
+
+    // Test 34 - validate() sans chiffre → InvalidInputException
+    @Test
+    void testValidateSansChiffre() {
+        assertThrows(InvalidInputException.class, () ->
+                authService.register("u3@test.com", "PasswordNoDigit!!", "PasswordNoDigit!!")
+        );
+    }
+
+    // Test 35 - validate() sans caractère spécial → InvalidInputException
+    @Test
+    void testValidateSansSpecial() {
+        assertThrows(InvalidInputException.class, () ->
+                authService.register("u4@test.com", "PasswordNoSpecial12", "PasswordNoSpecial12")
+        );
+    }
+
+    // Test 36 - evaluateStrength force MEDIUM
+    @Test
+    void testPasswordStrengthMedium() {
+        // Majuscule + minuscule + chiffre, pas de spécial, longueur 12 (< 16) → score 3 → MEDIUM
+        assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("Passwordmm3m"));
+    }
 }
 

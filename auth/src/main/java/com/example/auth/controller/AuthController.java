@@ -11,10 +11,24 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * Controller REST gérant les endpoints d'authentification TP3.
+ * Contrôleur REST gérant les endpoints d'authentification (TP3 — protocole HMAC).
  *
- * <p>Protocole TP3 : le mot de passe ne circule plus sur le réseau.
- * Le client envoie une preuve HMAC avec nonce et timestamp.</p>
+ * <h2>Endpoints exposés</h2>
+ * <ul>
+ *   <li>{@code POST /api/auth/register} — inscription d'un nouvel utilisateur.</li>
+ *   <li>{@code POST /api/auth/login} — connexion via preuve HMAC-SHA256.</li>
+ *   <li>{@code POST /api/auth/password-strength} — évaluation de la force d'un mot de passe.</li>
+ * </ul>
+ *
+ * <p>Le protocole TP3 garantit que le mot de passe ne circule jamais sur le réseau.
+ * Le client envoie une preuve {@code HMAC_SHA256(key=password, data=email:nonce:timestamp)}.</p>
+ *
+ * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement dangereuse
+ * et ne doit jamais être utilisée en production.</p>
+ *
+ * @see AuthService
+ * @see com.example.auth.service.HmacService
+ * @version 3.0
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -22,14 +36,32 @@ public class AuthController {
 
     private final AuthService authService;
 
+    /**
+     * Injecte le service d'authentification via le constructeur.
+     *
+     * @param authService service principal d'authentification
+     */
     public AuthController(AuthService authService) {
         this.authService = authService;
     }
 
     /**
-     * Endpoint d'inscription.
+     * Inscrit un nouvel utilisateur.
+     *
+     * <pre>
      * POST /api/auth/register
-     * Body JSON : { "email": "...", "password": "...", "passwordConfirm": "..." }
+     * Content-Type: application/json
+     * {
+     *   "email"           : "user@example.com",
+     *   "password"        : "MonMotDePasse1!",
+     *   "passwordConfirm" : "MonMotDePasse1!"
+     * }
+     * </pre>
+     *
+     * @param request corps JSON contenant email, password et passwordConfirm
+     * @return HTTP 200 avec message de confirmation et email inscrit,
+     *         HTTP 400 si données invalides,
+     *         HTTP 409 si email déjà utilisé
      */
     @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(
@@ -47,9 +79,23 @@ public class AuthController {
     }
 
     /**
-     * Endpoint de connexion TP3 — protocole HMAC.
+     * Authentifie un utilisateur via le protocole HMAC-SHA256 (TP3).
+     *
+     * <pre>
      * POST /api/auth/login
-     * Body JSON : { "email": "...", "nonce": "...", "timestamp": 123, "hmac": "..." }
+     * Content-Type: application/json
+     * {
+     *   "email"     : "user@example.com",
+     *   "nonce"     : "uuid-aléatoire",
+     *   "timestamp" : 1711234567,
+     *   "hmac"      : "Base64(HMAC_SHA256(key=password, data=email:nonce:timestamp))"
+     * }
+     * </pre>
+     *
+     * @param request corps JSON contenant email, nonce, timestamp et hmac
+     * @return HTTP 200 avec {@link LoginResponse} (accessToken + expiresAt),
+     *         HTTP 401 si authentification échouée,
+     *         HTTP 429 si compte verrouillé
      */
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
@@ -58,10 +104,19 @@ public class AuthController {
     }
 
     /**
-     * Endpoint pour évaluer la force d'un mot de passe.
+     * Évalue la force d'un mot de passe sans le stocker.
+     *
+     * <pre>
      * POST /api/auth/password-strength
-     * Body JSON : { "password": "xxx" }
-     * Note: POST utilisé intentionnellement pour ne pas exposer le mot de passe dans l'URL.
+     * Content-Type: application/json
+     * { "password": "MonMotDePasse1!" }
+     * </pre>
+     *
+     * <p><b>Note :</b> POST est utilisé intentionnellement pour ne pas exposer
+     * le mot de passe dans l'URL (éviter le logging dans les access logs).</p>
+     *
+     * @param body map JSON avec la clé {@code "password"}
+     * @return HTTP 200 avec {@code {"strength": "WEAK"|"MEDIUM"|"STRONG"}}
      */
     @PostMapping("/password-strength")
     public ResponseEntity<Map<String, Object>> passwordStrength(

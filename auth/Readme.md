@@ -162,7 +162,7 @@ En production industrielle pure, on utiliserait OAuth2/OIDC avec un hash non ré
 
 ## Qualité
 
-- **Tests JUnit** : 29 tests — tous verts ✅
+- **Tests JUnit** : 36 tests — tous verts ✅
 - **Couverture JaCoCo** : ≥ 80%
 - **SonarCloud** : configuré et Quality Gate en succès
 
