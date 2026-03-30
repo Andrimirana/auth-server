@@ -1,14 +1,14 @@
-name: CI - Build, Test and SonarCloud
+name: CI - Build, Test, SonarCloud and Docker
 
 on:
   push:
-    branches: [ "main", "tp4" ]
+    branches: [ "main", "tp4", "tp5-change-password" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
   build:
-    name: Build, Test and SonarCloud
+    name: Build, Test, SonarCloud and Docker
     runs-on: ubuntu-latest
 
     steps:
@@ -38,3 +38,8 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
         run: mvn -B sonar:sonar -Dsonar.qualitygate.wait=true
+
+      # Build Docker image (TP5)
+      - name: Build Docker image
+        run: docker build -t cdwfs-auth-app .
+
