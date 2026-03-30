@@ -492,5 +492,91 @@ class AuthApplicationTests {
         // Majuscule + minuscule + chiffre, pas de spécial, longueur 12 (< 16) → score 3 → MEDIUM
         assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("Passwordmm3m"));
     }
+
+    // ========== TESTS CHANGEMENT DE MOT DE PASSE (TP5) ==========
+
+    // Test 37 - Changement de mot de passe réussi
+    @Test
+    void testChangementMotDePasseOk() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        String newPassword = "NewPassword456!";
+        assertDoesNotThrow(() ->
+                authService.changePassword(response.getAccessToken(), VALID_PASSWORD, newPassword, newPassword)
+        );
+
+        // Vérifier que le nouveau mot de passe est stocké chiffré
+        User user = userRepository.findByEmail(VALID_EMAIL).orElseThrow();
+        assertTrue(user.getPasswordEncrypted().startsWith("v1:"),
+                "Le nouveau mot de passe doit être chiffré au format v1:...");
+    }
+
+    // Test 38 - Changement KO si ancien mot de passe incorrect
+    @Test
+    void testChangementKoAncienMotDePasseIncorrect() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        assertThrows(AuthenticationFailedException.class, () ->
+                authService.changePassword(response.getAccessToken(),
+                        "WrongPassword1!", "NewPassword456!", "NewPassword456!")
+        );
+    }
+
+    // Test 39 - Changement KO si confirmation différente
+    @Test
+    void testChangementKoConfirmationDifferente() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        assertThrows(InvalidInputException.class, () ->
+                authService.changePassword(response.getAccessToken(),
+                        VALID_PASSWORD, "NewPassword456!", "DifferentPass1!")
+        );
+    }
+
+    // Test 40 - Changement KO si nouveau mot de passe trop faible
+    @Test
+    void testChangementKoNouveauMotDePasseTropFaible() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        assertThrows(InvalidInputException.class, () ->
+                authService.changePassword(response.getAccessToken(), VALID_PASSWORD, "faible", "faible")
+        );
+    }
+
+    // Test 41 - Changement KO si token invalide (utilisateur inexistant)
+    @Test
+    void testChangementKoTokenInvalide() {
+        assertThrows(AuthenticationFailedException.class, () ->
+                authService.changePassword("token_invalide_xyz",
+                        VALID_PASSWORD, "NewPassword456!", "NewPassword456!")
+        );
+    }
+
+    // Test 42 - PUT /api/auth/change-password via HTTP → 200
+    @Test
+    void testChangementMotDePasseEndpointOk() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        String json = "{\"oldPassword\":\"" + VALID_PASSWORD + "\","
+                + "\"newPassword\":\"NewPassword456!\","
+                + "\"confirmPassword\":\"NewPassword456!\"}";
+
+        mockMvc.perform(put("/api/auth/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + response.getAccessToken())
+                        .content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Mot de passe changé avec succès"));
+    }
 }
 
