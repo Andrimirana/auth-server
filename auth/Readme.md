@@ -160,9 +160,70 @@ En production industrielle pure, on utiliserait OAuth2/OIDC avec un hash non ré
 
 ---
 
+## Analyse de sécurité TP5
+
+> TP5 ajoute le changement de mot de passe sécurisé et la conteneurisation Docker.
+
+**Amélioration 1 — Changement de mot de passe authentifié**  
+L'utilisateur doit présenter un Bearer token valide ET l'ancien mot de passe pour modifier ses credentials. Sans token valide, la requête est rejetée avec HTTP 401.
+
+**Amélioration 2 — Vérification de l'ancien mot de passe**  
+Le serveur déchiffre le mot de passe stocké via la Master Key et le compare à l'ancien mot de passe fourni. Un attaquant ayant volé le token seul ne peut pas changer le mot de passe sans connaître l'ancien.
+
+**Amélioration 3 — Politique de mot de passe maintenue**  
+Le nouveau mot de passe est soumis aux mêmes règles strictes (12 caractères, majuscule, minuscule, chiffre, spécial). Les mots de passe faibles sont refusés avec HTTP 400.
+
+**Amélioration 4 — Chiffrement systématique du nouveau mot de passe**  
+Le nouveau mot de passe est chiffré via AES-256-GCM avant stockage. Il ne circule jamais en clair en dehors de la requête HTTPS.
+
+**Amélioration 5 — Conteneurisation Docker**  
+L'application est packagée en image Docker, permettant un déploiement reproductible. La Master Key est injectée via la variable d'environnement `APP_MASTER_KEY` au démarrage du conteneur, jamais intégrée dans l'image.
+
+---
+
+## Lancer avec Docker (TP5)
+
+### 1. Builder l'image
+```bash
+cd auth
+mvn clean package -DskipTests
+docker build -t cdwfs-auth-app .
+```
+
+### 2. Lancer le conteneur
+```bash
+docker run -p 8080:8080 \
+  -e APP_MASTER_KEY=$(openssl rand -base64 32) \
+  -e SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/auth \
+  -e SPRING_DATASOURCE_USERNAME=root \
+  -e SPRING_DATASOURCE_PASSWORD=TON_MOT_DE_PASSE \
+  cdwfs-auth-app
+```
+
+> ⚠️ Ne jamais inclure `APP_MASTER_KEY` dans le Dockerfile ou dans l'image.
+
+### 3. Nouvel endpoint TP5
+
+| Méthode | URL | Description |
+|---------|-----|-------------|
+| PUT | /api/auth/change-password | Changement de mot de passe (Bearer token requis) |
+
+**Corps JSON :**
+```json
+{
+  "oldPassword": "AncienMotDePasse1!",
+  "newPassword": "NouveauMotDePasse2@",
+  "confirmPassword": "NouveauMotDePasse2@"
+}
+```
+
+**Header :** `Authorization: Bearer <accessToken>`
+
+---
+
 ## Qualité
 
-- **Tests JUnit** : 36 tests — tous verts ✅
+- **Tests JUnit** : 42 tests — tous verts ✅
 - **Couverture JaCoCo** : ≥ 80%
 - **SonarCloud** : configuré et Quality Gate en succès
 
@@ -220,4 +281,10 @@ Le fichier `.github/workflows/ci.yml` déclenche automatiquement sur chaque push
 | v3.6-tests-80 | Couverture 80% + 15 tests |
 | v3-tp3 | TP3 final — authentification forte HMAC |
 | v4-tp4 | TP4 final — Master Key AES-GCM + CI/CD |
+| v5.0-start | Démarrage TP5 — README TP5 |
+| v5.1-change-password | Endpoint PUT /api/auth/change-password |
+| v5.2-tests | Tests JUnit changement de mot de passe |
+| v5.3-docker | Dockerfile Spring Boot |
+| v5.4-cicd-docker | Pipeline CI/CD mise à jour avec Docker build |
+| v5-tp5 | TP5 final — Change Password + Docker |
 
