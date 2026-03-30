@@ -44,15 +44,12 @@ jobs:
         run: mvn -B verify
 
       # 5. Analyse SonarCloud (bloque si Quality Gate rouge)
+      #    sonar.projectKey / sonar.organization / sonar.host.url définis dans pom.xml
+      #    SONAR_TOKEN lu automatiquement depuis la variable d'environnement
       - name: SonarCloud Analysis
         working-directory: ./auth
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
-        run: |
-          mvn -B sonar:sonar \
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
-            -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.qualitygate.wait=true
+        run: mvn -B sonar:sonar -Dsonar.qualitygate.wait=true
