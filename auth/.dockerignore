@@ -1,0 +1,10 @@
+# Fichiers Docker
+.dockerignore
+
+# Répertoires à exclure du contexte Docker (accélère le build)
+target/
+.git/
+.idea/
+*.iml
+logs/
+
