@@ -1,9 +1,11 @@
 package com.example.auth.controller;
 
+import com.example.auth.dto.ChangePasswordRequest;
 import com.example.auth.dto.LoginRequest;
 import com.example.auth.dto.LoginResponse;
 import com.example.auth.dto.RegisterRequest;
-import com.example.auth.entity.User;
+import com.example.auth.exception.AuthenticationFailedException;
+import com.example.auth.service.AuthService;
 import com.example.auth.service.AuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -124,5 +126,44 @@ public class AuthController {
         String password = body.get("password");
         String strength = authService.evaluatePasswordStrength(password);
         return ResponseEntity.ok(Map.of("strength", strength));
+    }
+
+    /**
+     * Change le mot de passe d'un utilisateur authentifié (TP5).
+     *
+     * <pre>
+     * PUT /api/auth/change-password
+     * Authorization: Bearer &lt;accessToken&gt;
+     * Content-Type: application/json
+     * {
+     *   "oldPassword"     : "AncienMotDePasse1!",
+     *   "newPassword"     : "NouveauMotDePasse2@",
+     *   "confirmPassword" : "NouveauMotDePasse2@"
+     * }
+     * </pre>
+     *
+     * @param authHeader en-tête {@code Authorization: Bearer <token>}
+     * @param request    corps JSON avec oldPassword, newPassword, confirmPassword
+     * @return HTTP 200 si succès, 400 si données invalides,
+     *         401 si token invalide ou ancien MDP incorrect
+     */
+    @PutMapping("/change-password")
+    public ResponseEntity<Map<String, Object>> changePassword(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestBody ChangePasswordRequest request) {
+
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            throw new AuthenticationFailedException("Token manquant ou invalide");
+        }
+
+        String tokenValue = authHeader.substring(7);
+        authService.changePassword(
+                tokenValue,
+                request.getOldPassword(),
+                request.getNewPassword(),
+                request.getConfirmPassword()
+        );
+
+        return ResponseEntity.ok(Map.of("message", "Mot de passe changé avec succès"));
     }
 }

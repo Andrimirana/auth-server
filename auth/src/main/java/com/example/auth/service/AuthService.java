@@ -244,5 +244,51 @@ public class AuthService {
     public String evaluatePasswordStrength(String password) {
         return passwordPolicyValidator.evaluateStrength(password);
     }
+
+    /**
+     * Change le mot de passe d'un utilisateur authentifié (TP5).
+     *
+     * <h2>Étapes de vérification dans l'ordre</h2>
+     * <ol>
+     *   <li>Token Bearer valide → identification de l'utilisateur.</li>
+     *   <li>Déchiffrement AES-GCM du mot de passe stocké + comparaison avec {@code oldPassword}.</li>
+     *   <li>{@code newPassword} == {@code confirmPassword}.</li>
+     *   <li>Politique de sécurité sur {@code newPassword} (12 car., maj., min., chiffre, spécial).</li>
+     *   <li>Chiffrement AES-256-GCM du nouveau mot de passe et mise à jour en base.</li>
+     * </ol>
+     *
+     * @param tokenValue      valeur du Bearer token de l'utilisateur authentifié
+     * @param oldPassword     ancien mot de passe en clair, pour vérification
+     * @param newPassword     nouveau mot de passe en clair
+     * @param confirmPassword confirmation du nouveau mot de passe
+     * @throws AuthenticationFailedException si le token est invalide ou l'ancien MDP est incorrect
+     * @throws InvalidInputException         si la confirmation diffère ou la politique n'est pas respectée
+     */
+    public void changePassword(String tokenValue, String oldPassword,
+                               String newPassword, String confirmPassword) {
+        // 1. Identifier l'utilisateur via son token (lève AuthenticationFailedException si invalide)
+        User user = tokenService.getUserByToken(tokenValue);
+
+        // 2. Déchiffrer le mot de passe stocké et vérifier l'ancien mot de passe
+        String storedPlain = masterKeyService.decrypt(user.getPasswordEncrypted());
+        if (!storedPlain.equals(oldPassword)) {
+            logger.warn("Changement MDP échoué - ancien mot de passe incorrect pour : {}", user.getEmail());
+            throw new AuthenticationFailedException("Ancien mot de passe incorrect");
+        }
+
+        // 3. Vérifier la confirmation
+        if (!newPassword.equals(confirmPassword)) {
+            throw new InvalidInputException("Les mots de passe ne correspondent pas");
+        }
+
+        // 4. Valider la politique de sécurité
+        passwordPolicyValidator.validate(newPassword);
+
+        // 5. Chiffrer et sauvegarder
+        user.setPasswordEncrypted(masterKeyService.encrypt(newPassword));
+        userRepository.save(user);
+
+        logger.info("Mot de passe changé avec succès pour : {}", user.getEmail());
+    }
 }
 
