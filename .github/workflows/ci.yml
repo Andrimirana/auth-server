@@ -36,11 +36,11 @@ jobs:
             ${{ runner.os }}-maven-
 
       # 4. Build, Tests & rapport JaCoCo
-      #    APP_MASTER_KEY injectée via secret GitHub (jamais en dur dans le code)
+      #    Fallback : clé de test utilisée si le secret GitHub n'est pas défini
       - name: Build & Run Tests
         working-directory: ./auth
         env:
-          APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY }}
+          APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
         run: mvn -B verify
 
       # 5. Analyse SonarCloud (bloque si Quality Gate rouge)
@@ -49,7 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY }}
+          APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
         run: |
           mvn -B sonar:sonar \
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
