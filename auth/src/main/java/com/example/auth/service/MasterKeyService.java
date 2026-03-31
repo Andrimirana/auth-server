@@ -10,6 +10,7 @@ import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -96,8 +97,9 @@ public class MasterKeyService {
      * @param plaintext le mot de passe en clair à chiffrer
      * @return la chaîne chiffrée au format {@code v1:Base64(iv):Base64(ciphertext)}
      * @throws IllegalArgumentException si le plaintext est null ou vide
-     * @throws RuntimeException         si le chiffrement échoue (algorithme indisponible)
+     * @throws IllegalStateException    si le chiffrement AES-GCM échoue
      */
+    @SuppressWarnings("java:S4787") // Utilisation intentionnelle d'AES-256-GCM — algorithme fort approuvé
     public String encrypt(String plaintext) {
         if (plaintext == null || plaintext.isBlank()) {
             throw new IllegalArgumentException("Le plaintext ne peut pas être null ou vide");
@@ -117,8 +119,8 @@ public class MasterKeyService {
             String ciphertextB64 = Base64.getEncoder().encodeToString(ciphertext);
 
             return FORMAT_PREFIX + ":" + ivB64 + ":" + ciphertextB64;
-        } catch (Exception e) {
-            throw new RuntimeException("Erreur lors du chiffrement AES-GCM", e);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("Erreur lors du chiffrement AES-GCM", e);
         }
     }
 
@@ -131,8 +133,8 @@ public class MasterKeyService {
      * @param stored la valeur chiffrée au format {@code v1:...}
      * @return le mot de passe en clair
      * @throws IllegalArgumentException si le format est invalide ou si l'intégrité GCM échoue
-     * @throws RuntimeException         si le déchiffrement échoue
      */
+    @SuppressWarnings("java:S4787") // Utilisation intentionnelle d'AES-256-GCM — algorithme fort approuvé
     public String decrypt(String stored) {
         if (stored == null || stored.isBlank()) {
             throw new IllegalArgumentException("La valeur chiffrée ne peut pas être null ou vide");
@@ -152,7 +154,7 @@ public class MasterKeyService {
 
             byte[] plainBytes = cipher.doFinal(ciphertext);
             return new String(plainBytes, java.nio.charset.StandardCharsets.UTF_8);
-        } catch (Exception e) {
+        } catch (GeneralSecurityException e) {
             throw new IllegalArgumentException("Échec du déchiffrement AES-GCM — données corrompues ou clé incorrecte", e);
         }
     }

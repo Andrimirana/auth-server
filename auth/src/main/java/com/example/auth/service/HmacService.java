@@ -31,6 +31,7 @@ public class HmacService {
      * @throws NoSuchAlgorithmException si l'algorithme HmacSHA256 n'est pas disponible
      * @throws InvalidKeyException      si la clé est invalide
      */
+    @SuppressWarnings("java:S4787") // Utilisation intentionnelle de HMAC-SHA256 — protocole anti-rejeu TP3
     public String compute(String key, String data) throws NoSuchAlgorithmException, InvalidKeyException {
         Mac mac = Mac.getInstance("HmacSHA256");
         SecretKeySpec secretKey = new SecretKeySpec(

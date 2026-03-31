@@ -18,7 +18,6 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.Optional;
 
 /**
  * Service principal d'authentification — protocole HMAC-SHA256 avec nonce et timestamp (TP3).
@@ -158,13 +157,11 @@ public class AuthService {
         }
 
         // 1. Vérifier que l'email existe
-        Optional<User> optUser = userRepository.findByEmail(request.getEmail());
-        if (optUser.isEmpty()) {
-            logger.warn("Connexion échouée - email inconnu : {}", request.getEmail());
-            throw new AuthenticationFailedException("Identifiants incorrects");
-        }
-
-        User user = optUser.get();
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> {
+                    logger.warn("Connexion échouée - email inconnu : {}", request.getEmail());
+                    return new AuthenticationFailedException("Identifiants incorrects");
+                });
 
         // 2. Vérifier si compte verrouillé (anti brute-force)
         if (user.getLockUntil() != null && user.getLockUntil().isAfter(LocalDateTime.now())) {
