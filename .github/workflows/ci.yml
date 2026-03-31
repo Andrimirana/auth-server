@@ -4,15 +4,19 @@
 #   1. Recuperation du code (checkout)
 #   2. Installation du JDK 17
 #   3. Mise en cache Maven
-#   4. Build + Tests JUnit (JaCoCo)  -> BLOQUE si un test echoue
-#   5. Analyse SonarCloud            -> BLOQUE si Quality Gate rouge
-#   6. Construction image Docker     -> BLOQUE si le build Docker echoue
+#   4. chmod +x mvnw  (droits execution Ubuntu)
+#   5. Build + Tests JUnit (JaCoCo)  -> BLOQUE si un test echoue
+#   6. Analyse SonarCloud            -> BLOQUE si Quality Gate rouge
+#   7. Construction image Docker     -> BLOQUE si le build Docker echoue
 #
-# Secrets a configurer dans GitHub -> Settings -> Secrets and variables -> Actions :
-#   SONAR_TOKEN    : token SonarCloud (obligatoire)
-#   APP_MASTER_KEY : cle AES (optionnel, fallback fictif si absent)
+# Secret OBLIGATOIRE a configurer dans GitHub :
+#   GitHub -> Settings -> Secrets and variables -> Actions -> New repository secret
+#   SONAR_TOKEN    : token genere sur https://sonarcloud.io/account/security
 #
-# Valeurs deja definies dans pom.xml :
+# Secret OPTIONNEL (fallback fictif si absent) :
+#   APP_MASTER_KEY : cle AES-256 en Base64 (32 octets)
+#
+# Valeurs deja definies dans pom.xml (aucun secret supplementaire necessaire) :
 #   sonar.projectKey   = Andrimirana_auth-server
 #   sonar.organization = andrimirana
 #   sonar.host.url     = https://sonarcloud.io
@@ -54,7 +58,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # 4. Build + Tests JUnit + JaCoCo
+      # 4. Droits d'execution sur mvnw (requis sur Ubuntu)
+      - name: Make mvnw executable
+        run: chmod +x auth/mvnw
+
+      # 5. Build + Tests JUnit + JaCoCo
       #    H2 en memoire - pas de MySQL requis en CI
       #    BLOQUE automatiquement si un seul test echoue
       - name: Build and run tests
@@ -63,24 +71,28 @@ jobs:
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
         run: ./mvnw -B verify
 
-      # 5. Analyse SonarCloud
-      #    sonar.qualitygate.wait=true -> BLOQUE si Quality Gate rouge
+      # 6. Analyse SonarCloud
+      #    -Dsonar.token      -> authentification SonarCloud (secret SONAR_TOKEN obligatoire)
+      #    -Dsonar.qualitygate.wait=true -> BLOQUE si Quality Gate rouge
       - name: SonarCloud Analysis
         working-directory: ./auth
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN:  ${{ secrets.SONAR_TOKEN }}
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY || 'test_master_key_for_ci_only_32chars' }}
-        run: ./mvnw -B sonar:sonar -Dsonar.qualitygate.wait=true
+        run: |
+          ./mvnw -B sonar:sonar \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.qualitygate.wait=true
 
-      # 6. Build image Docker (TP5)
+      # 7. Build image Docker (TP5)
       #    BLOQUE si le Dockerfile est invalide ou si le build echoue
       #    APP_MASTER_KEY n'est JAMAIS incluse dans l'image
       - name: Build Docker image
         working-directory: ./auth
         run: docker build -t cdwfs-auth-app:${{ github.sha }} .
 
-      # 7. Tag 'latest' sur main uniquement
+      # 8. Tag 'latest' sur main uniquement
       - name: Tag Docker image as latest
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: docker tag cdwfs-auth-app:${{ github.sha }} cdwfs-auth-app:latest
