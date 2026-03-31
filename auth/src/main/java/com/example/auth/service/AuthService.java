@@ -18,6 +18,7 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 /**
  * Service principal d'authentification — protocole HMAC-SHA256 avec nonce et timestamp (TP3).
