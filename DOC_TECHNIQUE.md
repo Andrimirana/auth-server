@@ -1,6 +1,6 @@
 # Documentation Technique — Serveur d'Authentification HMAC-SHA256
 
-> **Projet :** `auth-server` — TP1 à TP4  
+> **Projet :** `auth-server` — TP1 à TP5  
 > **Framework :** Spring Boot 3.2.5 — Java 17  
 > **Base de données :** MySQL (production) / H2 (tests)  
 > **Qualité :** SonarCloud — `Andrimirana_auth-server`  

@@ -109,8 +109,8 @@ en cas de vol.
 
 ### Faiblesse restante
 
-> TP2 améliore le stockage mais ne protège pas encore contre le rejeu.  
-> Si un attaquant capture la requête de login, il peut tenter de la rejouer.  
+> TP2 améliore le stockage mais ne protège pas encore contre le rejeu.
+> Si un attaquant capture la requête de login, il peut tenter de la rejouer.
 > Cette faiblesse sera corrigée au TP3 avec HMAC + nonce + timestamp.
 
 ### Qualité — SonarCloud
@@ -118,4 +118,3 @@ en cas de vol.
 - Projet analysé sur SonarCloud
 - Quality Gate : **à compléter après analyse**
 - Couverture de tests : **objectif 60% minimum**
-

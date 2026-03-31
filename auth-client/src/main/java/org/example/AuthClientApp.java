@@ -80,6 +80,18 @@ public class AuthClientApp extends JFrame {
     // ─── Confirmation post-connexion ─────────────────────────────────────────
     private JLabel confirmEmailLabel;
 
+    // ─── Session active (TP5) ─────────────────────────────────────────────────
+    private String currentToken = null;
+
+    // ─── Champs changement de mot de passe (TP5) ─────────────────────────────
+    private JPasswordField cpOldPasswordField;
+    private JPasswordField cpNewPasswordField;
+    private JPasswordField cpConfirmPasswordField;
+    private JProgressBar   cpStrengthBar;
+    private JLabel         cpStrengthLabel;
+    private JLabel         cpMatchLabel;
+    private JButton        cpBtn;
+
     // ══════════════════════════════════════════════════════════════════════
     //  CONSTRUCTEUR
     // ══════════════════════════════════════════════════════════════════════
@@ -105,8 +117,9 @@ public class AuthClientApp extends JFrame {
         mainLayout = new CardLayout();
         mainPanel  = new JPanel(mainLayout);
         mainPanel.setBackground(BG);
-        mainPanel.add(buildAuthView(),    "auth");
-        mainPanel.add(buildConfirmView(), "confirm");
+        mainPanel.add(buildAuthView(),           "auth");
+        mainPanel.add(buildConfirmView(),        "confirm");
+        mainPanel.add(buildChangePasswordView(), "change-password");
 
         root.add(mainPanel,        BorderLayout.CENTER);
         root.add(buildStatusBar(), BorderLayout.SOUTH);
@@ -319,6 +332,13 @@ public class AuthClientApp extends JFrame {
         logoutBtn.setForeground(ERROR);
         logoutBtn.addActionListener(e -> doLogout());
 
+        JButton changePwdBtn = createButton("Changer le mot de passe", new Color(20, 40, 70), new Color(30, 58, 100));
+        changePwdBtn.setForeground(ACCENT);
+        changePwdBtn.addActionListener(e -> {
+            mainLayout.show(mainPanel, "change-password");
+            setStatus("Changement de mot de passe", TEXT_DIM);
+        });
+
         card.add(line);
         card.add(Box.createVerticalStrut(18));
         card.add(titleLabel);
@@ -328,7 +348,9 @@ public class AuthClientApp extends JFrame {
         card.add(confirmEmailLabel);
         card.add(Box.createVerticalStrut(24));
         card.add(sep);
-        card.add(Box.createVerticalStrut(24));
+        card.add(Box.createVerticalStrut(18));
+        card.add(changePwdBtn);
+        card.add(Box.createVerticalStrut(10));
         card.add(logoutBtn);
 
         GridBagConstraints gbc = new GridBagConstraints();
@@ -349,6 +371,7 @@ public class AuthClientApp extends JFrame {
     }
 
     private void doLogout() {
+        currentToken = null;
         loginPasswordField.setText("");
         mainLayout.show(mainPanel, "auth");
         setStatus("Deconnecte", TEXT_DIM);
@@ -440,6 +463,7 @@ public class AuthClientApp extends JFrame {
                 SwingUtilities.invokeLater(() -> {
                     setLoading(loginBtn, false);
                     if (res.statusCode() == 200) {
+                        currentToken = extractJsonValue(res.body(), "accessToken");
                         showConfirm(email);
                     } else if (res.statusCode() == 429) {
                         setStatus("Compte bloque — trop de tentatives", ERROR);
@@ -505,6 +529,220 @@ public class AuthClientApp extends JFrame {
             } catch (IOException | InterruptedException ex) {
                 SwingUtilities.invokeLater(() -> {
                     setLoading(registerBtn, false);
+                    setStatus("Serveur inaccessible", ERROR);
+                });
+            }
+        }).start();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  VUE CHANGEMENT DE MOT DE PASSE (TP5)
+    // ══════════════════════════════════════════════════════════════════════
+
+    /** Construit la vue de changement de mot de passe (accessible après login). */
+    private JPanel buildChangePasswordView() {
+        JPanel outer = new JPanel(new GridBagLayout());
+        outer.setBackground(BG);
+        outer.setBorder(new EmptyBorder(16, 28, 12, 28));
+
+        JPanel card = createCard();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBorder(new EmptyBorder(22, 26, 22, 26));
+
+        cpOldPasswordField     = createPasswordField();
+        cpNewPasswordField     = createPasswordField();
+        cpConfirmPasswordField = createPasswordField();
+
+        // Barre de force du nouveau mot de passe
+        cpStrengthBar = new JProgressBar(0, 100);
+        cpStrengthBar.setValue(0);
+        cpStrengthBar.setStringPainted(false);
+        cpStrengthBar.setBackground(BORDER_CLR);
+        cpStrengthBar.setForeground(ERROR);
+        cpStrengthBar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 3));
+        cpStrengthBar.setPreferredSize(new Dimension(0, 3));
+        cpStrengthBar.setBorderPainted(false);
+        cpStrengthBar.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        cpStrengthLabel = new JLabel("Entrez un nouveau mot de passe");
+        cpStrengthLabel.setFont(F_SUBTITLE);
+        cpStrengthLabel.setForeground(TEXT_DIM);
+        cpStrengthLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        cpMatchLabel = new JLabel(" ");
+        cpMatchLabel.setFont(F_SUBTITLE);
+        cpMatchLabel.setForeground(TEXT_DIM);
+        cpMatchLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        cpNewPasswordField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e)  { updateCpStrength(); updateCpMatch(); }
+            public void removeUpdate(DocumentEvent e)  { updateCpStrength(); updateCpMatch(); }
+            public void changedUpdate(DocumentEvent e) { updateCpStrength(); updateCpMatch(); }
+        });
+        cpConfirmPasswordField.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e)  { updateCpMatch(); }
+            public void removeUpdate(DocumentEvent e)  { updateCpMatch(); }
+            public void changedUpdate(DocumentEvent e) { updateCpMatch(); }
+        });
+
+        cpBtn = createButton("Changer le mot de passe", ACCENT, ACCENT_H);
+        cpBtn.addActionListener(e -> doChangePassword());
+
+        JButton backBtn = createButton("← Retour", new Color(28, 28, 45), new Color(38, 38, 60));
+        backBtn.setForeground(TEXT_DIM);
+        backBtn.addActionListener(e -> {
+            mainLayout.show(mainPanel, "confirm");
+            setStatus("Connexion reussie", SUCCESS);
+        });
+
+        JPanel cpStrengthInfo = new JPanel();
+        cpStrengthInfo.setLayout(new BoxLayout(cpStrengthInfo, BoxLayout.Y_AXIS));
+        cpStrengthInfo.setOpaque(false);
+        cpStrengthInfo.setAlignmentX(Component.LEFT_ALIGNMENT);
+        cpStrengthInfo.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+        cpStrengthInfo.add(Box.createVerticalStrut(6));
+        cpStrengthInfo.add(cpStrengthBar);
+        cpStrengthInfo.add(Box.createVerticalStrut(5));
+        cpStrengthInfo.add(cpStrengthLabel);
+
+        JPanel cpMatchInfo = new JPanel();
+        cpMatchInfo.setLayout(new BoxLayout(cpMatchInfo, BoxLayout.Y_AXIS));
+        cpMatchInfo.setOpaque(false);
+        cpMatchInfo.setAlignmentX(Component.LEFT_ALIGNMENT);
+        cpMatchInfo.setMaximumSize(new Dimension(Integer.MAX_VALUE, 18));
+        cpMatchInfo.add(Box.createVerticalStrut(5));
+        cpMatchInfo.add(cpMatchLabel);
+
+        // En-tête
+        JPanel titleLine = new JPanel();
+        titleLine.setBackground(ACCENT);
+        titleLine.setMaximumSize(new Dimension(40, 3));
+        titleLine.setPreferredSize(new Dimension(40, 3));
+        titleLine.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel titleLabel = new JLabel("Changer le mot de passe");
+        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        titleLabel.setForeground(ACCENT);
+        titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        card.add(titleLine);
+        card.add(Box.createVerticalStrut(14));
+        card.add(titleLabel);
+        card.add(Box.createVerticalStrut(20));
+        card.add(inputGroup("ANCIEN MOT DE PASSE",         cpOldPasswordField,    cpOldPasswordField));
+        card.add(Box.createVerticalStrut(12));
+        card.add(inputGroup("NOUVEAU MOT DE PASSE",        cpNewPasswordField,    cpNewPasswordField));
+        card.add(cpStrengthInfo);
+        card.add(Box.createVerticalStrut(8));
+        card.add(inputGroup("CONFIRMER LE NOUVEAU",        cpConfirmPasswordField, cpConfirmPasswordField));
+        card.add(cpMatchInfo);
+        card.add(Box.createVerticalStrut(20));
+        card.add(cpBtn);
+        card.add(Box.createVerticalStrut(10));
+        card.add(backBtn);
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill    = GridBagConstraints.HORIZONTAL;
+        gbc.anchor  = GridBagConstraints.CENTER;
+        gbc.weightx = 1;
+        outer.add(card, gbc);
+        return outer;
+    }
+
+    private void updateCpStrength() {
+        String pwd      = new String(cpNewPasswordField.getPassword());
+        String strength = evaluateStrength(pwd);
+        SwingUtilities.invokeLater(() -> {
+            switch (strength) {
+                case "WEAK"   -> { cpStrengthBar.setValue(28);  cpStrengthBar.setForeground(ERROR);
+                                   cpStrengthLabel.setText("Faible");  cpStrengthLabel.setForeground(ERROR); }
+                case "MEDIUM" -> { cpStrengthBar.setValue(62);  cpStrengthBar.setForeground(WARNING);
+                                   cpStrengthLabel.setText("Moyen");   cpStrengthLabel.setForeground(WARNING); }
+                case "STRONG" -> { cpStrengthBar.setValue(100); cpStrengthBar.setForeground(SUCCESS);
+                                   cpStrengthLabel.setText("Fort");    cpStrengthLabel.setForeground(SUCCESS); }
+            }
+        });
+    }
+
+    private void updateCpMatch() {
+        String pwd     = new String(cpNewPasswordField.getPassword());
+        String confirm = new String(cpConfirmPasswordField.getPassword());
+        SwingUtilities.invokeLater(() -> {
+            if (confirm.isEmpty()) {
+                cpMatchLabel.setText(" ");
+                cpMatchLabel.setForeground(TEXT_DIM);
+            } else if (pwd.equals(confirm)) {
+                cpMatchLabel.setText("Les mots de passe correspondent");
+                cpMatchLabel.setForeground(SUCCESS);
+            } else {
+                cpMatchLabel.setText("Les mots de passe ne correspondent pas");
+                cpMatchLabel.setForeground(ERROR);
+            }
+        });
+    }
+
+    /**
+     * Envoie PUT /api/auth/change-password avec Bearer token (TP5).
+     * Vérifie les champs localement avant d'appeler le serveur.
+     */
+    private void doChangePassword() {
+        if (currentToken == null) {
+            setStatus("Session expiree, veuillez vous reconnecter", ERROR);
+            doLogout();
+            return;
+        }
+
+        String oldPwd     = new String(cpOldPasswordField.getPassword());
+        String newPwd     = new String(cpNewPasswordField.getPassword());
+        String confirmPwd = new String(cpConfirmPasswordField.getPassword());
+
+        if (oldPwd.isBlank())                         { setStatus("Ancien mot de passe requis", ERROR); return; }
+        if (!newPwd.equals(confirmPwd))               { setStatus("Les nouveaux mots de passe ne correspondent pas", ERROR); return; }
+        if (evaluateStrength(newPwd).equals("WEAK"))  { setStatus("Nouveau mot de passe non conforme (12 car., maj., chiffre, special)", ERROR); return; }
+
+        setLoading(cpBtn, true);
+        setStatus("Changement en cours...", TEXT_DIM);
+
+        final String token = currentToken;
+        new Thread(() -> {
+            try {
+                String json = String.format(
+                        "{\"oldPassword\":\"%s\",\"newPassword\":\"%s\",\"confirmPassword\":\"%s\"}",
+                        escapeJson(oldPwd), escapeJson(newPwd), escapeJson(confirmPwd));
+
+                HttpResponse<String> res = httpClient.send(
+                        HttpRequest.newBuilder()
+                                .uri(URI.create(BASE_URL + "/api/auth/change-password"))
+                                .header("Content-Type", "application/json")
+                                .header("Authorization", "Bearer " + token)
+                                .PUT(HttpRequest.BodyPublishers.ofString(json))
+                                .build(),
+                        HttpResponse.BodyHandlers.ofString());
+
+                SwingUtilities.invokeLater(() -> {
+                    setLoading(cpBtn, false);
+                    if (res.statusCode() == 200) {
+                        // Réinitialiser le formulaire
+                        cpOldPasswordField.setText("");
+                        cpNewPasswordField.setText("");
+                        cpConfirmPasswordField.setText("");
+                        cpStrengthBar.setValue(0);
+                        cpStrengthLabel.setText("Entrez un nouveau mot de passe");
+                        cpStrengthLabel.setForeground(TEXT_DIM);
+                        cpMatchLabel.setText(" ");
+                        setStatus("Mot de passe change avec succes !", SUCCESS);
+                        mainLayout.show(mainPanel, "confirm");
+                    } else if (res.statusCode() == 401) {
+                        String msg = extractJsonValue(res.body(), "message");
+                        setStatus(msg != null ? msg : "Ancien mot de passe incorrect ou session expiree", ERROR);
+                    } else {
+                        String msg = extractJsonValue(res.body(), "message");
+                        setStatus(msg != null ? msg : "Erreur " + res.statusCode(), ERROR);
+                    }
+                });
+            } catch (IOException | InterruptedException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    setLoading(cpBtn, false);
                     setStatus("Serveur inaccessible", ERROR);
                 });
             }

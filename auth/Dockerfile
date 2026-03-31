@@ -22,6 +22,9 @@ WORKDIR /app
 COPY mvnw mvnw.cmd pom.xml ./
 COPY .mvn .mvn
 
+# Rendre mvnw exécutable (nécessaire quand le fichier provient de Windows)
+RUN chmod +x ./mvnw
+
 # Télécharger les dépendances (couche mise en cache si pom.xml inchangé)
 RUN ./mvnw dependency:go-offline -B
 
@@ -47,4 +50,3 @@ ENV SPRING_PROFILES_ACTIVE=prod
 
 # Démarrage de l'application
 ENTRYPOINT ["java", "-jar", "app.jar"]
-
