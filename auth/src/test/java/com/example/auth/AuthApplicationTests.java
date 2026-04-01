@@ -1,10 +1,12 @@
 package com.example.auth;
 
 import com.example.auth.dto.LoginRequest;
+import com.example.auth.entity.AccessToken;
 import com.example.auth.entity.User;
 import com.example.auth.exception.AuthenticationFailedException;
 import com.example.auth.exception.InvalidInputException;
 import com.example.auth.exception.ResourceConflictException;
+import com.example.auth.repository.AccessTokenRepository;
 import com.example.auth.repository.UserRepository;
 import com.example.auth.service.AuthService;
 import com.example.auth.service.HmacService;
@@ -52,6 +54,9 @@ class AuthApplicationTests {
 
     @Autowired
     private MasterKeyService masterKeyService;
+
+    @Autowired
+    private AccessTokenRepository accessTokenRepository;
 
     private static final String VALID_PASSWORD = "Password123!";
     private static final String VALID_EMAIL    = "test@example.com";
@@ -577,6 +582,150 @@ class AuthApplicationTests {
                         .content(json))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Mot de passe changé avec succès"));
+    }
+
+    // ========== TESTS COUVERTURE BRANCHES MANQUANTES ==========
+
+    // Test 43 - POST /api/auth/login via HTTP → 200 (couvre AuthController.login())
+    @Test
+    void testLoginEndpointOk() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+
+        String nonce     = UUID.randomUUID().toString();
+        long   timestamp = Instant.now().getEpochSecond();
+        String message   = VALID_EMAIL + ":" + nonce + ":" + timestamp;
+        String hmac      = hmacService.compute(VALID_PASSWORD, message);
+
+        String json = "{\"email\":\"" + VALID_EMAIL + "\","
+                + "\"nonce\":\"" + nonce + "\","
+                + "\"timestamp\":" + timestamp + ","
+                + "\"hmac\":\"" + hmac + "\"}";
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").exists());
+    }
+
+    // Test 44 - PUT /api/auth/change-password sans header Authorization → 401
+    @Test
+    void testChangementMotDePasseSansHeaderAuthorization() throws Exception {
+        String json = "{\"oldPassword\":\"Password123!\","
+                + "\"newPassword\":\"NewPassword456!\","
+                + "\"confirmPassword\":\"NewPassword456!\"}";
+
+        mockMvc.perform(put("/api/auth/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 45 - PUT /api/auth/change-password avec Authorization non-Bearer → 401
+    @Test
+    void testChangementMotDePasseHeaderNonBearer() throws Exception {
+        String json = "{\"oldPassword\":\"Password123!\","
+                + "\"newPassword\":\"NewPassword456!\","
+                + "\"confirmPassword\":\"NewPassword456!\"}";
+
+        mockMvc.perform(put("/api/auth/change-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Basic dXNlcjpwYXNz")
+                        .content(json))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // Test 46 - encrypt(null) → IllegalArgumentException (couvre plaintext == null TRUE)
+    @Test
+    void testEncryptNullLanceException() {
+        assertThrows(IllegalArgumentException.class, () ->
+                masterKeyService.encrypt(null)
+        );
+    }
+
+    // Test 47 - encrypt("   ") → IllegalArgumentException (couvre isBlank() TRUE)
+    @Test
+    void testEncryptBlancLanceException() {
+        assertThrows(IllegalArgumentException.class, () ->
+                masterKeyService.encrypt("   ")
+        );
+    }
+
+    // Test 48 - decrypt(null) → IllegalArgumentException (couvre stored == null TRUE)
+    @Test
+    void testDecryptNullLanceException() {
+        assertThrows(IllegalArgumentException.class, () ->
+                masterKeyService.decrypt(null)
+        );
+    }
+
+    // Test 49 - decrypt("") → IllegalArgumentException (couvre isBlank() TRUE)
+    @Test
+    void testDecryptVideLanceException() {
+        assertThrows(IllegalArgumentException.class, () ->
+                masterKeyService.decrypt("")
+        );
+    }
+
+    // Test 50 - decrypt format invalide (pas de ':') → IllegalArgumentException (couvre parts.length != 3 TRUE)
+    @Test
+    void testDecryptFormatSansDeuxPointsLanceException() {
+        assertThrows(IllegalArgumentException.class, () ->
+                masterKeyService.decrypt("formatinvalide")
+        );
+    }
+
+    // Test 51 - decrypt préfixe invalide → IllegalArgumentException (couvre !FORMAT_PREFIX.equals(parts[0]) TRUE)
+    @Test
+    void testDecryptPrefixeInvalideLanceException() {
+        assertThrows(IllegalArgumentException.class, () ->
+                masterKeyService.decrypt("notv1:abc:def")
+        );
+    }
+
+    // Test 52 - Token expiré → AuthenticationFailedException (couvre isBefore(now()) TRUE dans TokenService)
+    @Test
+    void testTokenExpireLanceException() throws Exception {
+        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
+        var response = authService.login(req);
+
+        // Forcer l'expiration du token en base
+        AccessToken token = accessTokenRepository.findByToken(response.getAccessToken()).orElseThrow();
+        token.setExpiresAt(LocalDateTime.now().minusMinutes(30));
+        accessTokenRepository.save(token);
+
+        assertThrows(AuthenticationFailedException.class, () ->
+                authService.getUserByToken(response.getAccessToken()),
+                "Un token expiré doit lever AuthenticationFailedException"
+        );
+    }
+
+    // Test 53 - evaluateStrength(null) → "WEAK" (couvre password == null TRUE)
+    @Test
+    void testEvaluateStrengthNull() {
+        assertEquals("WEAK", passwordPolicyValidator.evaluateStrength(null));
+    }
+
+    // Test 54 - evaluateStrength sans majuscule ni chiffre → "WEAK" (couvre HAS_UPPER FALSE, HAS_DIGIT FALSE, score <= 2 TRUE)
+    @Test
+    void testEvaluateStrengthSansMajusculeEtSansChiffre() {
+        // 12 chars : lower + special → score=2 ≤ 2 → WEAK
+        assertEquals("WEAK", passwordPolicyValidator.evaluateStrength("lowercase!!!"));
+    }
+
+    // Test 55 - evaluateStrength sans minuscule → "MEDIUM" (couvre HAS_LOWER FALSE)
+    @Test
+    void testEvaluateStrengthSansMinuscule() {
+        // 13 chars : upper + digit + special → score=3 ≤ 3 → MEDIUM
+        assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("UPPER12345!!!"));
+    }
+
+    // Test 56 - evaluateStrength longueur >= 16 → "STRONG" (couvre password.length() >= STRONG_LENGTH TRUE)
+    @Test
+    void testEvaluateStrengthAvecBonusLongueur() {
+        // 16 chars : upper + lower + digit + longueur→ score=4 > 3 → STRONG
+        assertEquals("STRONG", passwordPolicyValidator.evaluateStrength("Password12345678"));
     }
 }
 

@@ -50,10 +50,11 @@ public class MasterKeyService {
 
     private static final Logger logger = LoggerFactory.getLogger(MasterKeyService.class);
 
-    private static final String ALGORITHM     = "AES/GCM/NoPadding";
-    private static final int    GCM_IV_LENGTH = 12;
-    private static final int    GCM_TAG_BITS  = 128;
-    private static final String FORMAT_PREFIX = "v1";
+    private static final String       ALGORITHM     = "AES/GCM/NoPadding";
+    private static final int          GCM_IV_LENGTH = 12;
+    private static final int          GCM_TAG_BITS  = 128;
+    private static final String       FORMAT_PREFIX = "v1";
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     /** Master Key injectée depuis la variable d'environnement {@code APP_MASTER_KEY}. */
     @Value("${APP_MASTER_KEY}")
@@ -106,7 +107,7 @@ public class MasterKeyService {
         }
         try {
             byte[] iv = new byte[GCM_IV_LENGTH];
-            new SecureRandom().nextBytes(iv);
+            SECURE_RANDOM.nextBytes(iv);
 
             Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_BITS, iv));

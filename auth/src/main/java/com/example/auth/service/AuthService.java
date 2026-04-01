@@ -66,6 +66,9 @@ public class AuthService {
     /** Fenêtre de tolérance en secondes pour le timestamp de la requête (±60 s). */
     private static final long TIMESTAMP_WINDOW_SECONDS = 60L;
 
+    /** Message générique renvoyé sur tout échec d'authentification (non-divulgation). */
+    private static final String INVALID_CREDENTIALS = "Identifiants incorrects";
+
     private final UserRepository          userRepository;
     private final AuthNonceRepository     nonceRepository;
     private final HmacService             hmacService;
@@ -161,7 +164,7 @@ public class AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> {
                     logger.warn("Connexion échouée - email inconnu : {}", request.getEmail());
-                    return new AuthenticationFailedException("Identifiants incorrects");
+                    return new AuthenticationFailedException(INVALID_CREDENTIALS);
                 });
 
         // 2. Vérifier si compte verrouillé (anti brute-force)
@@ -174,14 +177,14 @@ public class AuthService {
         long now = Instant.now().getEpochSecond();
         if (Math.abs(now - request.getTimestamp()) > TIMESTAMP_WINDOW_SECONDS) {
             logger.warn("Connexion échouée - timestamp invalide pour : {}", request.getEmail());
-            throw new AuthenticationFailedException("Identifiants incorrects");
+            throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
 
         // 4. Vérifier le nonce (anti-rejeu)
         Optional<AuthNonce> existingNonce = nonceRepository.findByUserAndNonce(user, request.getNonce());
         if (existingNonce.isPresent()) {
             logger.warn("Connexion échouée - nonce déjà utilisé pour : {}", request.getEmail());
-            throw new AuthenticationFailedException("Identifiants incorrects");
+            throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
 
         // Enregistrer le nonce immédiatement pour bloquer tout rejeu concurrent
@@ -195,7 +198,7 @@ public class AuthService {
             expectedHmac = hmacService.compute(passwordPlain, message);
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {
             logger.error("Erreur calcul HMAC pour : {}", request.getEmail(), e);
-            throw new AuthenticationFailedException("Identifiants incorrects");
+            throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
 
         // 6. Comparer en temps constant (protection timing attack)
@@ -208,7 +211,7 @@ public class AuthService {
             }
             userRepository.save(user);
             logger.warn("Connexion échouée - HMAC invalide pour : {}", request.getEmail());
-            throw new AuthenticationFailedException("Identifiants incorrects");
+            throw new AuthenticationFailedException(INVALID_CREDENTIALS);
         }
 
         // Succès — réinitialiser le compteur
@@ -269,7 +272,7 @@ public class AuthService {
 
         // 2. Déchiffrer le mot de passe stocké et vérifier l'ancien mot de passe
         String storedPlain = masterKeyService.decrypt(user.getPasswordEncrypted());
-        if (!storedPlain.equals(oldPassword)) {
+        if (!hmacService.compare(storedPlain, oldPassword)) {
             logger.warn("Changement MDP échoué - ancien mot de passe incorrect pour : {}", user.getEmail());
             throw new AuthenticationFailedException("Ancien mot de passe incorrect");
         }
