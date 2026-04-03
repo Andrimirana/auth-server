@@ -1,6 +1,9 @@
 # Maven
 target/
 *.jar
+# Exception : maven-wrapper.jar doit etre commite pour la CI/CD
+!.mvn/wrapper/maven-wrapper.jar
+!auth/.mvn/wrapper/maven-wrapper.jar
 *.class
 
 # Logs
