@@ -5,72 +5,61 @@ import com.example.auth.entity.User;
 import com.example.auth.exception.AuthenticationFailedException;
 import com.example.auth.repository.AccessTokenRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Service de gestion des tokens d'accès SSO (Single Sign-On).
+ * Service de gestion des tokens d'accès Bearer (SSO).
  *
- * <p>Après une authentification HMAC réussie (TP3), ce service génère
- * un token UUID valable {@link AccessToken#EXPIRY_MINUTES} minutes.
- * Ce token doit être inclus dans le header {@code Authorization: Bearer <token>}
- * pour accéder aux routes protégées.</p>
+ * <p>Émet un token UUID après chaque login réussi et le valide
+ * lors des accès aux endpoints protégés.</p>
  *
- * <h2>Cycle de vie</h2>
- * <ol>
- *   <li>{@link #generate(User)} — crée et persiste le token après login réussi.</li>
- *   <li>{@link #getUserByToken(String)} — vérifie et retourne le propriétaire du token.</li>
- * </ol>
+ * <p>Chaque token est valide pendant {@value #TOKEN_VALIDITY_MINUTES} minutes.</p>
  *
- * @see com.example.auth.entity.AccessToken
- * @see com.example.auth.repository.AccessTokenRepository
- * @version 3.0
+ * <p> Ce token simple UUID est pédagogique. En production, on utiliserait
+ * un JWT signé (RS256/HS256) pour éviter la requête DB à chaque validation.</p>
  */
 @Service
 public class TokenService {
 
+    /** Durée de validité d'un token en minutes. */
+    public static final int TOKEN_VALIDITY_MINUTES = 15;
+
     private final AccessTokenRepository accessTokenRepository;
 
-    /**
-     * Injecte le repository des tokens via le constructeur.
-     *
-     * @param accessTokenRepository repository JPA des tokens d'accès
-     */
     public TokenService(AccessTokenRepository accessTokenRepository) {
         this.accessTokenRepository = accessTokenRepository;
     }
 
     /**
-     * Génère et persiste un nouveau token d'accès pour l'utilisateur authentifié.
+     * Génère un nouveau token Bearer pour un utilisateur authentifié.
+     * Le token est persisté en base de données.
      *
-     * <p>Le token est un UUID aléatoire. Sa date d'expiration est fixée à
-     * {@code now + }{@link AccessToken#EXPIRY_MINUTES} minutes.</p>
-     *
-     * @param user utilisateur authentifié pour lequel émettre le token
-     * @return le token créé et sauvegardé en base
+     * @param user l'utilisateur authentifié
+     * @return le token d'accès créé
      */
+    @Transactional
     public AccessToken generate(User user) {
-        AccessToken token = new AccessToken(user, UUID.randomUUID().toString());
+        String        tokenValue = UUID.randomUUID().toString();
+        LocalDateTime expiresAt  = LocalDateTime.now().plusMinutes(TOKEN_VALIDITY_MINUTES);
+        AccessToken   token      = new AccessToken(user, tokenValue, expiresAt);
         return accessTokenRepository.save(token);
     }
 
     /**
-     * Retrouve et valide l'utilisateur associé à un token Bearer.
+     * Recherche l'utilisateur associé à un token Bearer valide.
      *
-     * <p>Vérifications effectuées dans l'ordre :</p>
-     * <ol>
-     *   <li>Le token existe en base.</li>
-     *   <li>Le token n'est pas expiré.</li>
-     * </ol>
-     *
-     * @param tokenValue valeur UUID du token Bearer transmis dans le header Authorization
-     * @return l'utilisateur propriétaire du token valide
-     * @throws AuthenticationFailedException si le token est inexistant ou expiré
+     * @param tokenValue la valeur UUID du token
+     * @return l'utilisateur propriétaire du token
+     * @throws AuthenticationFailedException si le token est introuvable ou expiré
      */
+    @Transactional(readOnly = true)
     public User getUserByToken(String tokenValue) {
         AccessToken token = accessTokenRepository.findByToken(tokenValue)
-                .orElseThrow(() -> new AuthenticationFailedException("Token invalide"));
+                .orElseThrow(() -> new AuthenticationFailedException(
+                    "Token invalide ou expiré"));
 
         if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new AuthenticationFailedException("Token expiré");
@@ -78,3 +67,4 @@ public class TokenService {
         return token.getUser();
     }
 }
+

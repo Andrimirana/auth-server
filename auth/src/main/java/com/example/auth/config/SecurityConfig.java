@@ -1,84 +1,66 @@
 package com.example.auth.config;
 
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 
 /**
- * Configuration Spring Security pour TP3/TP4.
+ * Configuration Spring Security — mode stateless total.
  *
- * <p>Cette API REST stateless utilise son propre protocole d'authentification HMAC-SHA256
- * avec nonce et timestamp. CSRF est désactivé intentionnellement car :</p>
- * <ul>
- *   <li>L'API est stateless (pas de session, pas de cookie de session)</li>
- *   <li>L'authentification passe par un token Bearer dans l'en-tête Authorization</li>
- *   <li>La protection anti-rejeu est assurée par le nonce et la fenêtre de timestamp</li>
- * </ul>
+ * <p>CSRF désactivé intentionnellement : l'API est stateless (aucune session HTTP,
+ * aucun cookie de session). L'authentification passe uniquement par un header
+ * {@code Authorization: Bearer <token>}, ce qui rend l'attaque CSRF impossible.</p>
  *
- * <p>Les en-têtes de sécurité HTTP sont activés pour protéger les clients.</p>
- *
- * @see com.example.auth.service.AuthService
- * @see com.example.auth.service.TokenService
- * @version 3.0
+ * <p>En-têtes de sécurité HTTP activés : X-Content-Type-Options, X-Frame-Options,
+ * HSTS et Referrer-Policy.</p>
  */
 @Configuration
+@EnableWebSecurity
 public class SecurityConfig {
 
     /**
-     * Configure la chaîne de filtres de sécurité Spring Security.
+     * Chaîne de filtres de sécurité.
      *
-     * <p>Décisions de configuration :</p>
-     * <ul>
-     *   <li><b>CSRF désactivé</b> intentionnellement : l'API est stateless,
-     *       aucune session ni cookie de session n'est utilisé. La protection
-     *       anti-rejeu est assurée par le nonce + fenêtre de timestamp du protocole HMAC.</li>
-     *   <li><b>Stateless</b> : aucune session HTTP créée ({@code STATELESS}).</li>
-     *   <li><b>En-têtes sécurité</b> : HSTS, X-Content-Type-Options,
-     *       X-Frame-Options (DENY), Referrer-Policy.</li>
-     *   <li><b>Autorisation ouverte</b> : toutes les routes sont accessibles ;
-     *       l'authentification est gérée par notre propre logique dans
-     *       {@link com.example.auth.service.AuthService} et
-     *       {@link com.example.auth.service.TokenService}.</li>
-     * </ul>
-     *
-     * @param http objet de configuration Spring Security
-     * @return la chaîne de filtres configurée
+     * @param http le builder HttpSecurity Spring
+     * @return la SecurityFilterChain configurée
      * @throws Exception si la configuration échoue
      */
     @Bean
-    @SuppressWarnings("java:S4502") // CSRF désactivé intentionnellement : API REST stateless (sans session ni cookie).
-                                    // La protection anti-rejeu est assurée par le protocole HMAC-SHA256 + nonce + fenêtre de timestamp.
-                                    // Aucun formulaire HTML ni cookie de session : le vecteur d'attaque CSRF ne s'applique pas.
+    @SuppressWarnings("java:S4502") // CSRF désactivé volontairement — API stateless Bearer token
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                // CSRF désactivé intentionnellement : API REST stateless (pas de session/cookie)
-                // La protection anti-rejeu est gérée par le protocole HMAC + nonce + timestamp
-                .csrf(AbstractHttpConfigurer::disable)
-
-                // API stateless : aucune session HTTP créée
-                .sessionManagement(session ->
-                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-
-                // En-têtes de sécurité HTTP
-                .headers(headers -> headers
-                        .contentTypeOptions(contentType -> {})
-                        .frameOptions(frame -> frame.deny())
-                        .httpStrictTransportSecurity(hsts -> hsts
-                                .includeSubDomains(true)
-                                .maxAgeInSeconds(31536000))
-                        .referrerPolicy(referrer ->
-                                referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
-                )
-
-                // Toutes les routes sont accessibles : l'authentification est gérée par
-                // notre propre protocole HMAC + token Bearer dans AuthService/TokenService
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
-
+            .csrf(AbstractHttpConfigurer::disable)
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .headers(headers -> headers
+                .contentTypeOptions(contentType -> {})
+                .frameOptions(frame -> frame.deny())
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .includeSubDomains(true)
+                    .maxAgeInSeconds(31536000))
+                .referrerPolicy(referrer ->
+                    referrer.policy(
+                        org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
+                            .ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+            )
+            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
         return http.build();
+    }
+
+    /**
+     * Encodeur BCrypt — utilisé pour les tests de politique de mot de passe.
+     *
+     * @return un BCryptPasswordEncoder
+     */
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
     }
 }
 

@@ -1,122 +1,97 @@
 package com.example.auth.service;
 
 import com.example.auth.exception.InvalidInputException;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.util.regex.Pattern;
 
 /**
- * Validateur de la politique de mot de passe — introduit en TP2.
+ * Service de validation et d'évaluation de la force des mots de passe.
  *
- * <h2>Règles imposées</h2>
+ * <p>Règles de validation (TP2+) :</p>
  * <ul>
- *   <li>Minimum {@value #MIN_LENGTH} caractères.</li>
- *   <li>Au moins 1 lettre majuscule.</li>
- *   <li>Au moins 1 lettre minuscule.</li>
- *   <li>Au moins 1 chiffre.</li>
- *   <li>Au moins 1 caractère spécial (tout caractère non alphanumérique).</li>
+ *   <li>Longueur minimale : 12 caractères</li>
+ *   <li>Au moins 1 lettre majuscule (A–Z)</li>
+ *   <li>Au moins 1 lettre minuscule (a–z)</li>
+ *   <li>Au moins 1 chiffre (0–9)</li>
+ *   <li>Au moins 1 caractère spécial non alphanumérique</li>
  * </ul>
  *
- * <h2>Niveaux de force</h2>
- * <ul>
- *   <li><b>WEAK</b> — longueur insuffisante ou ≤ 2 critères satisfaits.</li>
- *   <li><b>MEDIUM</b> — 3 critères satisfaits.</li>
- *   <li><b>STRONG</b> — 4 critères + longueur ≥ {@value #STRONG_LENGTH}.</li>
- * </ul>
+ * <p>Les patterns regex sont pré-compilés en constantes statiques pour éviter
+ * les recompilations à chaque appel et se protéger contre les attaques ReDoS.</p>
  *
- * <p><b>Note technique :</b> Les {@link Pattern} sont pré-compilés en constantes
- * statiques pour éviter une recompilation à chaque appel (performance et protection ReDoS).</p>
- *
- * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement fragile
- * et ne doit jamais être utilisée seule en production.
- * TP2 améliore le stockage mais ne protège pas encore contre le rejeu.</p>
- *
- * @see com.example.auth.service.AuthService
- * @see com.example.auth.exception.InvalidInputException
- * @version 2.0
+ * <p>⚠️ Cette implémentation est pédagogique. Ne jamais utiliser en production
+ * sans audit de sécurité complet.</p>
  */
-@Component
+@Service
 public class PasswordPolicyValidator {
 
-    /** Longueur minimale requise pour un mot de passe valide. */
-    private static final int MIN_LENGTH = 12;
-
-    /** Longueur à partir de laquelle un mot de passe est considéré fort. */
-    private static final int STRONG_LENGTH = 16;
-
-    /** Pattern de détection d'au moins une lettre majuscule. */
-    private static final Pattern HAS_UPPER = Pattern.compile("[A-Z]");
-
-    /** Pattern de détection d'au moins une lettre minuscule. */
-    private static final Pattern HAS_LOWER = Pattern.compile("[a-z]");
-
-    /** Pattern de détection d'au moins un chiffre. */
-    private static final Pattern HAS_DIGIT = Pattern.compile("\\d");
-
-    /** Pattern de détection d'au moins un caractère spécial (non alphanumérique). */
-    private static final Pattern HAS_SPECIAL = Pattern.compile("[^a-zA-Z0-9]");
+    private static final int    MIN_LENGTH       = 12;
+    private static final Pattern HAS_UPPER       = Pattern.compile("[A-Z]");
+    private static final Pattern HAS_LOWER       = Pattern.compile("[a-z]");
+    private static final Pattern HAS_DIGIT       = Pattern.compile("[0-9]");
+    private static final Pattern HAS_SPECIAL     = Pattern.compile("[^a-zA-Z0-9]");
 
     /**
-     * Valide le mot de passe selon la politique TP2.
+     * Valide un mot de passe selon la politique de sécurité.
+     * Lève une {@link InvalidInputException} si une règle n'est pas respectée.
      *
-     * <p>Lève une {@link InvalidInputException} dès la première règle non respectée.</p>
-     *
-     * @param password le mot de passe en clair à valider
-     * @throws InvalidInputException si le mot de passe est {@code null}, trop court,
-     *                               ou ne satisfait pas l'une des règles de composition
+     * @param password le mot de passe à valider
+     * @throws InvalidInputException si le mot de passe est null, vide ou ne respecte pas les règles
      */
     public void validate(String password) {
-        if (password == null || password.length() < MIN_LENGTH) {
+        if (password == null || password.isBlank()) {
+            throw new InvalidInputException("Le mot de passe ne peut pas être vide");
+        }
+        if (password.length() < MIN_LENGTH) {
             throw new InvalidInputException(
-                    "Mot de passe trop court (minimum " + MIN_LENGTH + " caractères)"
-            );
+                "Le mot de passe doit contenir au moins " + MIN_LENGTH + " caractères");
         }
         if (!HAS_UPPER.matcher(password).find()) {
             throw new InvalidInputException(
-                    "Le mot de passe doit contenir au moins une majuscule"
-            );
+                "Le mot de passe doit contenir au moins une lettre majuscule");
         }
         if (!HAS_LOWER.matcher(password).find()) {
             throw new InvalidInputException(
-                    "Le mot de passe doit contenir au moins une minuscule"
-            );
+                "Le mot de passe doit contenir au moins une lettre minuscule");
         }
         if (!HAS_DIGIT.matcher(password).find()) {
             throw new InvalidInputException(
-                    "Le mot de passe doit contenir au moins un chiffre"
-            );
+                "Le mot de passe doit contenir au moins un chiffre");
         }
         if (!HAS_SPECIAL.matcher(password).find()) {
             throw new InvalidInputException(
-                    "Le mot de passe doit contenir au moins un caractère spécial"
-            );
+                "Le mot de passe doit contenir au moins un caractère spécial");
         }
     }
 
     /**
-     * Évalue la force d'un mot de passe sans le valider.
+     * Évalue la force d'un mot de passe sans le stocker.
      *
-     * <p>Calcule un score en comptant le nombre de critères satisfaits
-     * (majuscule, minuscule, chiffre, spécial, longueur ≥ {@value #STRONG_LENGTH}).
-     * Utilisé côté serveur pour alimenter l'indicateur visuel client (rouge/orange/vert).</p>
+     * <p>Grille d'évaluation :</p>
+     * <ul>
+     *   <li>{@code WEAK}   : longueur &lt; 12 ou ≤ 2 critères satisfaits</li>
+     *   <li>{@code MEDIUM} : 3 critères satisfaits</li>
+     *   <li>{@code STRONG} : ≥ 4 critères ET longueur ≥ 16</li>
+     * </ul>
      *
-     * @param password le mot de passe à évaluer (peut ne pas respecter la politique)
-     * @return {@code "WEAK"} si score ≤ 2 ou longueur insuffisante,
-     *         {@code "MEDIUM"} si score = 3,
-     *         {@code "STRONG"} si score ≥ 4
+     * @param password le mot de passe à évaluer
+     * @return {@code "WEAK"}, {@code "MEDIUM"} ou {@code "STRONG"}
      */
     public String evaluateStrength(String password) {
-        if (password == null || password.length() < MIN_LENGTH) return "WEAK";
-
+        if (password == null || password.length() < MIN_LENGTH) {
+            return "WEAK";
+        }
         int score = 0;
         if (HAS_UPPER.matcher(password).find())   score++;
         if (HAS_LOWER.matcher(password).find())   score++;
         if (HAS_DIGIT.matcher(password).find())   score++;
         if (HAS_SPECIAL.matcher(password).find()) score++;
-        if (password.length() >= STRONG_LENGTH)   score++;
 
         if (score <= 2) return "WEAK";
-        if (score <= 3) return "MEDIUM";
-        return "STRONG";
+        if (score == 3) return "MEDIUM";
+        // score >= 4
+        return password.length() >= 16 ? "STRONG" : "MEDIUM";
     }
 }
+

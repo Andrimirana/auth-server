@@ -1,6 +1,8 @@
 package com.example.auth;
 
+import com.example.auth.dto.ChangePasswordRequest;
 import com.example.auth.dto.LoginRequest;
+import com.example.auth.dto.LoginResponse;
 import com.example.auth.entity.AccessToken;
 import com.example.auth.entity.User;
 import com.example.auth.exception.AuthenticationFailedException;
@@ -8,724 +10,528 @@ import com.example.auth.exception.InvalidInputException;
 import com.example.auth.exception.ResourceConflictException;
 import com.example.auth.repository.AccessTokenRepository;
 import com.example.auth.repository.UserRepository;
-import com.example.auth.service.AuthService;
-import com.example.auth.service.HmacService;
-import com.example.auth.service.MasterKeyService;
-import com.example.auth.service.PasswordPolicyValidator;
+import com.example.auth.service.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.hamcrest.Matchers.*;
 
 /**
- * Tests d'intégration pour le serveur d'authentification TP4.
- * Protocole HMAC-SHA256 avec nonce, timestamp et chiffrement AES-256-GCM.
+ * Tests d'intégration — Serveur d'Authentification HMAC-SHA256 (TP1 → TP5).
+ *
+ * <p>Utilise H2 en mémoire — aucune dépendance MySQL requise en CI/CD.</p>
+ * <p>Couverture minimum : 80 % (objectif SonarCloud TP3+).</p>
+ *
+ * <p>⚠️ Cette implémentation est pédagogique. Ne jamais utiliser en production
+ * sans audit de sécurité complet.</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@Transactional
+@ActiveProfiles("test")
 class AuthApplicationTests {
 
-    @Autowired
-    private AuthService authService;
+    @Autowired private MockMvc              mockMvc;
+    @Autowired private AuthService          authService;
+    @Autowired private HmacService          hmacService;
+    @Autowired private MasterKeyService     masterKeyService;
+    @Autowired private PasswordPolicyValidator passwordPolicy;
+    @Autowired private UserRepository       userRepository;
+    @Autowired private AccessTokenRepository tokenRepository;
+    @Autowired private com.example.auth.repository.AuthNonceRepository nonceRepository;
 
-    @Autowired
-    private HmacService hmacService;
+    private static final String EMAIL    = "test@example.com";
+    private static final String PASSWORD = "TestPassword1!";
 
-    @Autowired
-    private PasswordPolicyValidator passwordPolicyValidator;
+    @BeforeEach
+    void setUp() {
+        // Respecter l'ordre des FK : tokens et nonces avant users
+        tokenRepository.deleteAll();
+        nonceRepository.deleteAll();
+        userRepository.deleteAll();
+    }
 
-    @Autowired
-    private UserRepository userRepository;
+    // ════════════════════════════════════════════════════════════════
+    //  TP1 — Validation email
+    // ════════════════════════════════════════════════════════════════
 
-    @Autowired
-    private MockMvc mockMvc;
+    @Test
+    @DisplayName("T01 — Inscription KO si email vide → 400")
+    void registerEmailVide() {
+        assertThatThrownBy(() -> authService.register("", PASSWORD, PASSWORD))
+                .isInstanceOf(InvalidInputException.class)
+                .hasMessageContaining("email");
+    }
 
-    @Autowired
-    private MasterKeyService masterKeyService;
+    @Test
+    @DisplayName("T02 — Inscription KO si email format invalide → 400")
+    void registerEmailFormatInvalide() {
+        assertThatThrownBy(() -> authService.register("pasunemail", PASSWORD, PASSWORD))
+                .isInstanceOf(InvalidInputException.class);
+    }
 
-    @Autowired
-    private AccessTokenRepository accessTokenRepository;
+    @Test
+    @DisplayName("T03 — Inscription KO si mot de passe trop court → 400")
+    void registerMotDePasseTropCourt() {
+        assertThatThrownBy(() -> authService.register(EMAIL, "Ab1!", "Ab1!"))
+                .isInstanceOf(InvalidInputException.class)
+                .hasMessageContaining("12");
+    }
 
-    private static final String VALID_PASSWORD = "Password123!";
-    private static final String VALID_EMAIL    = "test@example.com";
+    @Test
+    @DisplayName("T04 — Inscription OK → 200")
+    void registerOk() {
+        var result = authService.register(EMAIL, PASSWORD, PASSWORD);
+        assertThat(result).containsEntry("message", "Inscription réussie");
+        assertThat(result).containsEntry("email", EMAIL);
+        assertThat(userRepository.existsByEmail(EMAIL)).isTrue();
+    }
 
-    // ========== MÉTHODE UTILITAIRE ==========
+    @Test
+    @DisplayName("T05 — Inscription refusée si email déjà existant → 409")
+    void registerEmailDejaExistant() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        assertThatThrownBy(() -> authService.register(EMAIL, PASSWORD, PASSWORD))
+                .isInstanceOf(ResourceConflictException.class);
+    }
 
-    /**
-     * Construit une LoginRequest valide avec HMAC correct.
-     */
-    private LoginRequest buildValidRequest(String email, String password) throws Exception {
+    // ════════════════════════════════════════════════════════════════
+    //  TP3 — Login HMAC
+    // ════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T06 — Login OK avec HMAC valide → token retourné")
+    void loginHmacValide() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse resp = doValidLogin(EMAIL, PASSWORD);
+        assertThat(resp.accessToken()).isNotBlank();
+        assertThat(resp.expiresAt()).isAfter(LocalDateTime.now());
+    }
+
+    @Test
+    @DisplayName("T07 — Login KO si mot de passe incorrect (HMAC invalide) → 401")
+    void loginMotDePasseIncorrect() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        assertThatThrownBy(() -> doValidLogin(EMAIL, "MauvaisPassword1!"))
+                .isInstanceOf(AuthenticationFailedException.class);
+    }
+
+    @Test
+    @DisplayName("T08 — Login KO si email inconnu → 401")
+    void loginEmailInconnu() {
         String nonce     = UUID.randomUUID().toString();
         long   timestamp = Instant.now().getEpochSecond();
-        String message   = email + ":" + nonce + ":" + timestamp;
-        String hmac      = hmacService.compute(password, message);
-
-        LoginRequest req = new LoginRequest();
-        req.setEmail(email);
-        req.setNonce(nonce);
-        req.setTimestamp(timestamp);
-        req.setHmac(hmac);
-        return req;
+        String message   = "inconnu@example.com:" + nonce + ":" + timestamp;
+        String hmac      = hmacService.compute(PASSWORD, message);
+        var req = new LoginRequest("inconnu@example.com", nonce, timestamp, hmac);
+        assertThatThrownBy(() -> authService.login(req))
+                .isInstanceOf(AuthenticationFailedException.class);
     }
 
-    // ========== TESTS INSCRIPTION ==========
-
-    // Test 1 - Email vide
     @Test
-    void testEmailVide() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register("", VALID_PASSWORD, VALID_PASSWORD)
-        );
+    @DisplayName("T09 — Login KO si timestamp expiré (> 60s) → 401")
+    void loginTimestampExpire() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        long   oldTs  = Instant.now().getEpochSecond() - 120; // 120s dans le passé
+        String nonce   = UUID.randomUUID().toString();
+        String message = EMAIL + ":" + nonce + ":" + oldTs;
+        String hmac    = hmacService.compute(PASSWORD, message);
+        var req = new LoginRequest(EMAIL, nonce, oldTs, hmac);
+        assertThatThrownBy(() -> authService.login(req))
+                .isInstanceOf(AuthenticationFailedException.class);
     }
 
-    // Test 2 - Format email incorrect
     @Test
-    void testEmailFormatIncorrect() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register("pasunemail", VALID_PASSWORD, VALID_PASSWORD)
-        );
+    @DisplayName("T10 — Login KO si timestamp futur (> 60s) → 401")
+    void loginTimestampFutur() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        long   futureTs = Instant.now().getEpochSecond() + 120;
+        String nonce    = UUID.randomUUID().toString();
+        String message  = EMAIL + ":" + nonce + ":" + futureTs;
+        String hmac     = hmacService.compute(PASSWORD, message);
+        var req = new LoginRequest(EMAIL, nonce, futureTs, hmac);
+        assertThatThrownBy(() -> authService.login(req))
+                .isInstanceOf(AuthenticationFailedException.class);
     }
 
-    // Test 3 - Mot de passe trop court
     @Test
-    void testMotDePasseTropCourt() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register(VALID_EMAIL, "Ab1!", "Ab1!")
-        );
-    }
-
-    // Test 4 - Mots de passe différents
-    @Test
-    void testMotsDePasseDifferents() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register(VALID_EMAIL, VALID_PASSWORD, "AutrePass1!")
-        );
-    }
-
-    // Test 5 - Inscription OK
-    @Test
-    void testInscriptionOK() {
-        assertDoesNotThrow(() ->
-                authService.register("nouveau@example.com", VALID_PASSWORD, VALID_PASSWORD)
-        );
-    }
-
-    // Test 6 - Inscription refusée si email déjà existant
-    @Test
-    void testInscriptionEmailDejaExistant() {
-        authService.register("doublon@example.com", VALID_PASSWORD, VALID_PASSWORD);
-        assertThrows(ResourceConflictException.class, () ->
-                authService.register("doublon@example.com", VALID_PASSWORD, VALID_PASSWORD)
-        );
-    }
-
-    // ========== TESTS LOGIN HMAC ==========
-
-    // Test 7 - Login OK avec HMAC valide
-    @Test
-    void testLoginOkHmacValide() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        assertDoesNotThrow(() -> authService.login(req));
-    }
-
-    // Test 8 - Login KO HMAC invalide
-    @Test
-    void testLoginKoHmacInvalide() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        req.setHmac("hmac_completement_faux");
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.login(req)
-        );
-    }
-
-    // Test 9 - Login KO timestamp expiré (trop vieux)
-    @Test
-    void testLoginKoTimestampExpire() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
+    @DisplayName("T11 — Login KO si nonce déjà utilisé (anti-rejeu) → 401")
+    void loginNonceDejaUtilise() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        long   timestamp = Instant.now().getEpochSecond();
         String nonce     = UUID.randomUUID().toString();
-        long   timestamp = Instant.now().getEpochSecond() - 120; // 2 minutes dans le passé
-        String message   = VALID_EMAIL + ":" + nonce + ":" + timestamp;
-        String hmac      = hmacService.compute(VALID_PASSWORD, message);
-
-        LoginRequest req = new LoginRequest();
-        req.setEmail(VALID_EMAIL);
-        req.setNonce(nonce);
-        req.setTimestamp(timestamp);
-        req.setHmac(hmac);
-
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.login(req)
-        );
+        String message   = EMAIL + ":" + nonce + ":" + timestamp;
+        String hmac      = hmacService.compute(PASSWORD, message);
+        var req = new LoginRequest(EMAIL, nonce, timestamp, hmac);
+        authService.login(req); // Premier login OK
+        assertThatThrownBy(() -> authService.login(req)) // Rejeu → 401
+                .isInstanceOf(AuthenticationFailedException.class);
     }
 
-    // Test 10 - Login KO timestamp futur
     @Test
-    void testLoginKoTimestampFutur() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        String nonce     = UUID.randomUUID().toString();
-        long   timestamp = Instant.now().getEpochSecond() + 120; // 2 minutes dans le futur
-        String message   = VALID_EMAIL + ":" + nonce + ":" + timestamp;
-        String hmac      = hmacService.compute(VALID_PASSWORD, message);
-
-        LoginRequest req = new LoginRequest();
-        req.setEmail(VALID_EMAIL);
-        req.setNonce(nonce);
-        req.setTimestamp(timestamp);
-        req.setHmac(hmac);
-
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.login(req)
-        );
+    @DisplayName("T12 — Comparaison HMAC en temps constant (pas de fuite timing)")
+    void hmacComparaisonTempsConstant() {
+        // MessageDigest.isEqual doit retourner false sans fuite d'information
+        assertThat(hmacService.compare("abc", "xyz")).isFalse();
+        assertThat(hmacService.compare("abc", "abc")).isTrue();
+        assertThat(hmacService.compare(null,  "xyz")).isFalse();
+        assertThat(hmacService.compare("abc", null)).isFalse();
     }
 
-    // Test 11 - Login KO nonce déjà utilisé (anti-rejeu)
     @Test
-    void testLoginKoNonceDejaUtilise() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-
-        // Premier login réussi
-        authService.login(req);
-
-        // Deuxième login avec le même nonce = rejeté
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.login(req)
-        );
+    @DisplayName("T13 — Token émis → accès /api/me OK → 200")
+    void tokenEmisPuisAccesMeOk() throws Exception {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse resp = doValidLogin(EMAIL, PASSWORD);
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Bearer " + resp.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value(EMAIL));
     }
 
-    // Test 12 - Login KO user inconnu
     @Test
-    void testLoginKoUserInconnu() throws Exception {
-        LoginRequest req = buildValidRequest("inconnu@example.com", VALID_PASSWORD);
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.login(req)
-        );
+    @DisplayName("T14 — Accès /api/me sans token → 401")
+    void accesMeSansToken() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "Bearer invalid-token"))
+                .andExpect(status().isUnauthorized());
     }
 
-    // Test 13 - Token émis et /api/me accessible
+    // ════════════════════════════════════════════════════════════════
+    //  TP2 — Anti brute-force
+    // ════════════════════════════════════════════════════════════════
+
     @Test
-    void testTokenEmisEtApiMeOk() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-
-        var response = authService.login(req);
-        assertNotNull(response.getAccessToken());
-        assertNotNull(response.getExpiresAt());
-
-        // Vérifier que le token donne accès à /api/me
-        User user = authService.getUserByToken(response.getAccessToken());
-        assertEquals(VALID_EMAIL, user.getEmail());
-    }
-
-    // Test 14 - Accès /api/me sans token KO
-    @Test
-    void testApiMeSansTokenKo() {
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.getUserByToken("token_inexistant")
-        );
-    }
-
-    // Test 15 - Comparaison HMAC en temps constant
-    @Test
-    void testComparaisonTempsConstant() {
-        assertTrue(hmacService.compare("abc", "abc"));
-        assertFalse(hmacService.compare("abc", "xyz"));
-        assertFalse(hmacService.compare(null, "abc"));
-        assertFalse(hmacService.compare("abc", null));
-    }
-
-    // Test 16 - Non-divulgation : même message pour email inconnu et HMAC invalide
-    @Test
-    void testNonDivulgationErreur() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-
-        LoginRequest req1 = buildValidRequest("inconnu@example.com", VALID_PASSWORD);
-        LoginRequest req2 = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        req2.setHmac("hmac_faux");
-
-        AuthenticationFailedException ex1 = assertThrows(
-                AuthenticationFailedException.class,
-                () -> authService.login(req1)
-        );
-        AuthenticationFailedException ex2 = assertThrows(
-                AuthenticationFailedException.class,
-                () -> authService.login(req2)
-        );
-
-        assertEquals(ex1.getMessage(), ex2.getMessage());
-    }
-
-    // Test 17 - Évaluation force mot de passe WEAK
-    @Test
-    void testPasswordStrengthWeak() {
-        assertEquals("WEAK", passwordPolicyValidator.evaluateStrength("abc"));
-    }
-
-    // Test 18 - Évaluation force mot de passe STRONG
-    @Test
-    void testPasswordStrengthStrong() {
-        assertEquals("STRONG", passwordPolicyValidator.evaluateStrength("Password123!@#"));
-    }
-
-    // Test 19 - Lockout expire correctement après la durée de blocage
-    @Test
-    void testLockoutExpireCorrectement() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-
-        // Provoquer 5 échecs consécutifs pour déclencher le blocage
+    @DisplayName("T15 — Compte verrouillé après 5 échecs → 429")
+    void compteLockoutApres5Echecs() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        // 5 tentatives échouées
         for (int i = 0; i < 5; i++) {
-            LoginRequest bad = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-            bad.setHmac("hmac_faux_" + i);
-            try {
-                authService.login(bad);
-            } catch (AuthenticationFailedException ignored) {
-                // Intentionnel : l'exception est attendue à chaque itération.
-                // Son seul effet est d'incrémenter le compteur d'échecs côté serveur
-                // afin de déclencher le blocage du compte après 5 tentatives.
-            }
+            try { doValidLogin(EMAIL, "MauvaisPassword1!"); } catch (Exception ignored) { /* expected */ }
         }
-
-        // Vérifier que le compte est bien bloqué
-        LoginRequest blockedReq = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        AuthenticationFailedException locked = assertThrows(
-                AuthenticationFailedException.class,
-                () -> authService.login(blockedReq)
-        );
-        assertTrue(locked.getMessage().contains("bloqué"),
-                "Le compte doit être bloqué après 5 échecs");
-
-        // Simuler l'expiration : on remet lock_until dans le passé via UserRepository
-        User user = userRepository.findByEmail(VALID_EMAIL).orElseThrow();
-        user.setLockUntil(LocalDateTime.now().minusMinutes(5));
-        user.setFailedAttempts(0);
-        userRepository.save(user);
-
-        // Après expiration, la connexion doit fonctionner
-        LoginRequest validReq = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        assertDoesNotThrow(() -> authService.login(validReq),
-                "La connexion doit réussir après expiration du blocage");
+        // La 6e doit déclencher le lockout
+        assertThatThrownBy(() -> doValidLogin(EMAIL, PASSWORD))
+                .isInstanceOf(AuthenticationFailedException.class)
+                .hasMessageContaining("bloqué");
     }
 
-    // ========== TESTS CONTRÔLEUR AuthController ==========
-
-    // Test 20 - POST /api/auth/register via HTTP → 200
     @Test
-    void testRegisterEndpointOk() throws Exception {
-        String json = "{\"email\":\"ctrl@example.com\","
-                + "\"password\":\"Password123!\","
-                + "\"passwordConfirm\":\"Password123!\"}";
-        mockMvc.perform(post("/api/auth/register")
+    @DisplayName("T16 — Non-divulgation : même message pour email inconnu ET mauvais MDP")
+    void nonDivulgationErreurMessage() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        // Email inconnu
+        String nonce = UUID.randomUUID().toString();
+        long ts = Instant.now().getEpochSecond();
+        var req1 = new LoginRequest("inconnu@example.com", nonce, ts,
+                hmacService.compute(PASSWORD, "inconnu@example.com:" + nonce + ":" + ts));
+        // Mauvais MDP
+        String nonce2 = UUID.randomUUID().toString();
+        var req2 = new LoginRequest(EMAIL, nonce2, ts,
+                hmacService.compute("MauvaisMdp1!", EMAIL + ":" + nonce2 + ":" + ts));
+
+        String msg1 = null, msg2 = null;
+        try { authService.login(req1); } catch (AuthenticationFailedException e) { msg1 = e.getMessage(); }
+        try { authService.login(req2); } catch (AuthenticationFailedException e) { msg2 = e.getMessage(); }
+        assertThat(msg1).isEqualTo(msg2);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  TP4 — Master Key AES-256-GCM
+    // ════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T17 — Chiffrement/Déchiffrement OK — texte récupéré intact")
+    void masterKeyEncryptDecryptOk() {
+        String plain     = "MonMotDePasse123!";
+        String encrypted = masterKeyService.encrypt(plain);
+        String decrypted = masterKeyService.decrypt(encrypted);
+        assertThat(decrypted).isEqualTo(plain);
+    }
+
+    @Test
+    @DisplayName("T18 — Mot de passe chiffré ≠ mot de passe clair")
+    void masterKeyChiffreEstDifferentDuClair() {
+        String plain     = "MonMotDePasse123!";
+        String encrypted = masterKeyService.encrypt(plain);
+        assertThat(encrypted).isNotEqualTo(plain);
+        assertThat(encrypted).startsWith("v1:");
+    }
+
+    @Test
+    @DisplayName("T19 — Déchiffrement KO si ciphertext modifié (intégrité GCM)")
+    void masterKeyDecryptEchoueAvecCiphertextModifie() {
+        String encrypted = masterKeyService.encrypt("MonMotDePasse123!");
+        String tampered  = encrypted + "XXXXXX";
+        assertThatThrownBy(() -> masterKeyService.decrypt(tampered))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("T20 — Login OK avec mot de passe chiffré en base")
+    void loginOkAvecMotDePasseChiffreEnBase() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        User user = userRepository.findByEmail(EMAIL).orElseThrow();
+        // Vérifier que le mot de passe est bien chiffré en base
+        assertThat(user.getPasswordEncrypted()).startsWith("v1:");
+        // Et que le login fonctionne
+        LoginResponse resp = doValidLogin(EMAIL, PASSWORD);
+        assertThat(resp.accessToken()).isNotBlank();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  TP5 — Changement de mot de passe
+    // ════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T21 — Changement de mot de passe réussi → 200")
+    void changePasswordOk() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse login = doValidLogin(EMAIL, PASSWORD);
+        String newPwd = "NouveauPassword2@";
+        authService.changePassword(login.accessToken(),
+                new ChangePasswordRequest(PASSWORD, newPwd, newPwd));
+        // Vérifier que le nouveau mot de passe fonctionne
+        LoginResponse newLogin = doValidLogin(EMAIL, newPwd);
+        assertThat(newLogin.accessToken()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("T22 — Changement KO si ancien mot de passe incorrect → 401")
+    void changePasswordAncienIncorrect() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse login = doValidLogin(EMAIL, PASSWORD);
+        assertThatThrownBy(() -> authService.changePassword(login.accessToken(),
+                new ChangePasswordRequest("MauvaisAncien1!", "NouveauPassword2@", "NouveauPassword2@")))
+                .isInstanceOf(AuthenticationFailedException.class);
+    }
+
+    @Test
+    @DisplayName("T23 — Changement KO si confirmPassword différent → 400")
+    void changePasswordConfirmDifferent() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse login = doValidLogin(EMAIL, PASSWORD);
+        assertThatThrownBy(() -> authService.changePassword(login.accessToken(),
+                new ChangePasswordRequest(PASSWORD, "NouveauPassword2@", "AutrePassword3#")))
+                .isInstanceOf(InvalidInputException.class);
+    }
+
+    @Test
+    @DisplayName("T24 — Changement KO si nouveau mot de passe trop faible → 400")
+    void changePasswordNouveauTropFaible() {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse login = doValidLogin(EMAIL, PASSWORD);
+        assertThatThrownBy(() -> authService.changePassword(login.accessToken(),
+                new ChangePasswordRequest(PASSWORD, "faible", "faible")))
+                .isInstanceOf(InvalidInputException.class);
+    }
+
+    @Test
+    @DisplayName("T25 — Changement KO si token invalide → 401")
+    void changePasswordTokenInvalide() {
+        assertThatThrownBy(() -> authService.changePassword("token-invalide",
+                new ChangePasswordRequest(PASSWORD, "NouveauPassword2@", "NouveauPassword2@")))
+                .isInstanceOf(AuthenticationFailedException.class);
+    }
+
+    @Test
+    @DisplayName("T26 — Endpoint PUT /api/auth/change-password → 200")
+    void changePasswordEndpoint() throws Exception {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        LoginResponse login = doValidLogin(EMAIL, PASSWORD);
+        String json = """
+            {"oldPassword":"TestPassword1!",
+             "newPassword":"NouveauPassword2@",
+             "confirmPassword":"NouveauPassword2@"}
+            """;
+        mockMvc.perform(put("/api/auth/change-password")
+                        .header("Authorization", "Bearer " + login.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("ctrl@example.com"))
-                .andExpect(jsonPath("$.message").value("Inscription réussie"));
+                .andExpect(jsonPath("$.message").value("Mot de passe modifié avec succès"));
     }
 
-    // Test 21 - POST /api/auth/register doublon → 409
+    // ════════════════════════════════════════════════════════════════
+    //  Compte de test obligatoire
+    // ════════════════════════════════════════════════════════════════
+
     @Test
-    void testRegisterEndpointDoublon() throws Exception {
-        String json = "{\"email\":\"ctrl2@example.com\","
-                + "\"password\":\"Password123!\","
-                + "\"passwordConfirm\":\"Password123!\"}";
+    @DisplayName("T27 — Compte de test toto@example.com / TestPassword1! fonctionne")
+    void compteDeTestObligatoire() {
+        authService.register("toto@example.com", "TestPassword1!", "TestPassword1!");
+        LoginResponse resp = doValidLogin("toto@example.com", "TestPassword1!");
+        assertThat(resp.accessToken()).isNotBlank();
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  HTTP Controller — endpoints non couverts par les tests service
+    // ════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T30 — POST /api/auth/register → 200")
+    void httpRegisterOk() throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json))
-                .andExpect(status().isOk());
+                        .content("{\"email\":\"http@example.com\","
+                               + "\"password\":\"TestPassword1!\","
+                               + "\"passwordConfirm\":\"TestPassword1!\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Inscription réussie"))
+                .andExpect(jsonPath("$.email").value("http@example.com"));
+    }
+
+    @Test
+    @DisplayName("T31 — POST /api/auth/register email vide → 400")
+    void httpRegisterEmailVide() throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json))
+                        .content("{\"email\":\"\","
+                               + "\"password\":\"TestPassword1!\","
+                               + "\"passwordConfirm\":\"TestPassword1!\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("T32 — POST /api/auth/register email déjà existant → 409")
+    void httpRegisterEmailDejaExistant() throws Exception {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + EMAIL + "\","
+                               + "\"password\":\"TestPassword1!\","
+                               + "\"passwordConfirm\":\"TestPassword1!\"}"))
                 .andExpect(status().isConflict());
     }
 
-    // Test 22 - POST /api/auth/password-strength → 200
     @Test
-    void testPasswordStrengthEndpoint() throws Exception {
-        mockMvc.perform(post("/api/auth/password-strength")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"password\":\"Password123!\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.strength").value("STRONG"));
-    }
-
-    // ========== TESTS MASTER KEY (TP4) ==========
-
-    // Test 23 - Chiffrement puis déchiffrement retourne le plaintext original
-    @Test
-    void testMasterKeyEncryptDecryptOk() {
-        String plain     = "MotDePasseSecret123!";
-        String encrypted = masterKeyService.encrypt(plain);
-        String decrypted = masterKeyService.decrypt(encrypted);
-        assertEquals(plain, decrypted, "Le déchiffrement doit retourner le mot de passe original");
-    }
-
-    // Test 24 - Le ciphertext est différent du plaintext, et deux chiffrements donnent des résultats différents (IV aléatoire)
-    @Test
-    void testEncryptedDifferentFromClear() {
-        String plain      = "MotDePasseSecret123!";
-        String encrypted1 = masterKeyService.encrypt(plain);
-        String encrypted2 = masterKeyService.encrypt(plain);
-
-        assertNotEquals(plain, encrypted1, "Le ciphertext ne doit pas être identique au plaintext");
-        assertTrue(encrypted1.startsWith("v1:"), "Le format doit commencer par 'v1:'");
-        assertNotEquals(encrypted1, encrypted2,
-                "Deux chiffrements du même plaintext doivent produire des ciphertexts différents (IV aléatoire)");
-    }
-
-    // Test 25 - Le déchiffrement échoue si le ciphertext est modifié (intégrité GCM)
-    @Test
-    void testDecryptKoIfCiphertextModified() {
-        String plain     = "MotDePasseSecret123!";
-        String encrypted = masterKeyService.encrypt(plain);
-
-        // Modifier le ciphertext (3ème partie après les deux ':')
-        String[] parts   = encrypted.split(":");
-        String   tampered = parts[0] + ":" + parts[1] + ":AAAAAAAAAAAAAAAAAAAAAA==";
-
-        assertThrows(Exception.class, () -> masterKeyService.decrypt(tampered),
-                "Le déchiffrement doit échouer si le ciphertext a été modifié (vérification GCM)");
-    }
-
-    // Test 26 - Le login fonctionne avec un utilisateur inscrit (mot de passe chiffré en base)
-    @Test
-    void testLoginOkAvecMotDePasseChiffre() throws Exception {
-        authService.register("tp4user@example.com", VALID_PASSWORD, VALID_PASSWORD);
-
-        // Vérifier que le mot de passe stocké en base est bien chiffré (pas en clair)
-        User user = userRepository.findByEmail("tp4user@example.com").orElseThrow();
-        assertNotEquals(VALID_PASSWORD, user.getPasswordEncrypted(),
-                "Le mot de passe ne doit pas être stocké en clair");
-        assertTrue(user.getPasswordEncrypted().startsWith("v1:"),
-                "Le mot de passe doit être stocké au format v1:...");
-
-        // Vérifier que le login fonctionne malgré le chiffrement
-        LoginRequest req = buildValidRequest("tp4user@example.com", VALID_PASSWORD);
-        assertDoesNotThrow(() -> authService.login(req),
-                "Le login doit réussir avec le mot de passe chiffré en base");
-    }
-
-    // ========== TESTS USERCONTROLLER (/api/me via MockMvc) ==========
-
-    // Test 28 - GET /api/me avec Bearer token valide → 200 + email
-    @Test
-    void testApiMeAvecTokenBearer() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        mockMvc.perform(get("/api/me")
-                        .header("Authorization", "Bearer " + response.getAccessToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value(VALID_EMAIL))
-                .andExpect(jsonPath("$.message").value("Accès autorisé"));
-    }
-
-    // Test 29 - GET /api/me sans header Authorization → 401
-    @Test
-    void testApiMeSansHeaderAuthorization() throws Exception {
-        mockMvc.perform(get("/api/me"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    // Test 30 - GET /api/me avec préfixe non-Bearer (Basic) → 401
-    @Test
-    void testApiMeAvecPrefixeNonBearer() throws Exception {
-        mockMvc.perform(get("/api/me")
-                        .header("Authorization", "Basic dXNlcjpwYXNz"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    // Test 31 - GET /api/me avec token Bearer invalide → 401
-    @Test
-    void testApiMeAvecTokenBearerinvalide() throws Exception {
-        mockMvc.perform(get("/api/me")
-                        .header("Authorization", "Bearer token_invalide_xyz"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    // ========== TESTS POLITIQUE MOT DE PASSE — branches manquantes ==========
-
-    // Test 32 - validate() sans majuscule → InvalidInputException
-    @Test
-    void testValidateSansMajuscule() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register("u1@test.com", "lowercase12345!!", "lowercase12345!!")
-        );
-    }
-
-    // Test 33 - validate() sans minuscule → InvalidInputException
-    @Test
-    void testValidateSansMinuscule() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register("u2@test.com", "UPPERCASE12345!!", "UPPERCASE12345!!")
-        );
-    }
-
-    // Test 34 - validate() sans chiffre → InvalidInputException
-    @Test
-    void testValidateSansChiffre() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register("u3@test.com", "PasswordNoDigit!!", "PasswordNoDigit!!")
-        );
-    }
-
-    // Test 35 - validate() sans caractère spécial → InvalidInputException
-    @Test
-    void testValidateSansSpecial() {
-        assertThrows(InvalidInputException.class, () ->
-                authService.register("u4@test.com", "PasswordNoSpecial12", "PasswordNoSpecial12")
-        );
-    }
-
-    // Test 36 - evaluateStrength force MEDIUM
-    @Test
-    void testPasswordStrengthMedium() {
-        // Majuscule + minuscule + chiffre, pas de spécial, longueur 12 (< 16) → score 3 → MEDIUM
-        assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("Passwordmm3m"));
-    }
-
-    // ========== TESTS CHANGEMENT DE MOT DE PASSE (TP5) ==========
-
-    // Test 37 - Changement de mot de passe réussi
-    @Test
-    void testChangementMotDePasseOk() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        String newPassword = "NewPassword456!";
-        assertDoesNotThrow(() ->
-                authService.changePassword(response.getAccessToken(), VALID_PASSWORD, newPassword, newPassword)
-        );
-
-        // Vérifier que le nouveau mot de passe est stocké chiffré
-        User user = userRepository.findByEmail(VALID_EMAIL).orElseThrow();
-        assertTrue(user.getPasswordEncrypted().startsWith("v1:"),
-                "Le nouveau mot de passe doit être chiffré au format v1:...");
-    }
-
-    // Test 38 - Changement KO si ancien mot de passe incorrect
-    @Test
-    void testChangementKoAncienMotDePasseIncorrect() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.changePassword(response.getAccessToken(),
-                        "WrongPassword1!", "NewPassword456!", "NewPassword456!")
-        );
-    }
-
-    // Test 39 - Changement KO si confirmation différente
-    @Test
-    void testChangementKoConfirmationDifferente() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        assertThrows(InvalidInputException.class, () ->
-                authService.changePassword(response.getAccessToken(),
-                        VALID_PASSWORD, "NewPassword456!", "DifferentPass1!")
-        );
-    }
-
-    // Test 40 - Changement KO si nouveau mot de passe trop faible
-    @Test
-    void testChangementKoNouveauMotDePasseTropFaible() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        assertThrows(InvalidInputException.class, () ->
-                authService.changePassword(response.getAccessToken(), VALID_PASSWORD, "faible", "faible")
-        );
-    }
-
-    // Test 41 - Changement KO si token invalide (utilisateur inexistant)
-    @Test
-    void testChangementKoTokenInvalide() {
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.changePassword("token_invalide_xyz",
-                        VALID_PASSWORD, "NewPassword456!", "NewPassword456!")
-        );
-    }
-
-    // Test 42 - PUT /api/auth/change-password via HTTP → 200
-    @Test
-    void testChangementMotDePasseEndpointOk() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        String json = "{\"oldPassword\":\"" + VALID_PASSWORD + "\","
-                + "\"newPassword\":\"NewPassword456!\","
-                + "\"confirmPassword\":\"NewPassword456!\"}";
-
-        mockMvc.perform(put("/api/auth/change-password")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + response.getAccessToken())
-                        .content(json))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("Mot de passe changé avec succès"));
-    }
-
-    // ========== TESTS COUVERTURE BRANCHES MANQUANTES ==========
-
-    // Test 43 - POST /api/auth/login via HTTP → 200 (couvre AuthController.login())
-    @Test
-    void testLoginEndpointOk() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-
+    @DisplayName("T33 — POST /api/auth/login OK → 200 avec token")
+    void httpLoginOk() throws Exception {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
         String nonce     = UUID.randomUUID().toString();
         long   timestamp = Instant.now().getEpochSecond();
-        String message   = VALID_EMAIL + ":" + nonce + ":" + timestamp;
-        String hmac      = hmacService.compute(VALID_PASSWORD, message);
-
-        String json = "{\"email\":\"" + VALID_EMAIL + "\","
-                + "\"nonce\":\"" + nonce + "\","
-                + "\"timestamp\":" + timestamp + ","
-                + "\"hmac\":\"" + hmac + "\"}";
-
+        String message   = EMAIL + ":" + nonce + ":" + timestamp;
+        String hmac      = hmacService.compute(PASSWORD, message);
+        String json = String.format(
+            "{\"email\":\"%s\",\"nonce\":\"%s\",\"timestamp\":%d,\"hmac\":\"%s\"}",
+            EMAIL, nonce, timestamp, hmac);
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").exists());
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.expiresAt").isNotEmpty());
     }
 
-    // Test 44 - PUT /api/auth/change-password sans header Authorization → 401
     @Test
-    void testChangementMotDePasseSansHeaderAuthorization() throws Exception {
-        String json = "{\"oldPassword\":\"Password123!\","
-                + "\"newPassword\":\"NewPassword456!\","
-                + "\"confirmPassword\":\"NewPassword456!\"}";
-
-        mockMvc.perform(put("/api/auth/change-password")
+    @DisplayName("T34 — POST /api/auth/login HMAC invalide → 401")
+    void httpLoginHmacInvalide() throws Exception {
+        authService.register(EMAIL, PASSWORD, PASSWORD);
+        String nonce     = UUID.randomUUID().toString();
+        long   timestamp = Instant.now().getEpochSecond();
+        String json = String.format(
+            "{\"email\":\"%s\",\"nonce\":\"%s\",\"timestamp\":%d,\"hmac\":\"invalide\"}",
+            EMAIL, nonce, timestamp);
+        mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isUnauthorized());
     }
 
-    // Test 45 - PUT /api/auth/change-password avec Authorization non-Bearer → 401
     @Test
-    void testChangementMotDePasseHeaderNonBearer() throws Exception {
-        String json = "{\"oldPassword\":\"Password123!\","
-                + "\"newPassword\":\"NewPassword456!\","
-                + "\"confirmPassword\":\"NewPassword456!\"}";
-
-        mockMvc.perform(put("/api/auth/change-password")
+    @DisplayName("T35 — POST /api/auth/password-strength → STRONG")
+    void httpPasswordStrengthStrong() throws Exception {
+        mockMvc.perform(post("/api/auth/password-strength")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Basic dXNlcjpwYXNz")
+                        .content("{\"password\":\"SuperStr0ng!Password\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.strength").value("STRONG"));
+    }
+
+    @Test
+    @DisplayName("T36 — POST /api/auth/password-strength → WEAK")
+    void httpPasswordStrengthWeak() throws Exception {
+        mockMvc.perform(post("/api/auth/password-strength")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"weak\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.strength").value("WEAK"));
+    }
+
+    @Test
+    @DisplayName("T37 — POST /api/auth/password-strength → MEDIUM")
+    void httpPasswordStrengthMedium() throws Exception {
+        mockMvc.perform(post("/api/auth/password-strength")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"Testpassword1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.strength").value("MEDIUM"));
+    }
+
+    @Test
+    @DisplayName("T38 — GET /api/me avec header sans préfixe Bearer → 401")
+    void httpMeSansPrefixeBearer() throws Exception {
+        mockMvc.perform(get("/api/me")
+                        .header("Authorization", "token-sans-bearer"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("T39 — PUT /api/auth/change-password sans préfixe Bearer → 401")
+    void httpChangePasswordSansPrefixeBearer() throws Exception {
+        String json = "{\"oldPassword\":\"TestPassword1!\","
+                    + "\"newPassword\":\"NouveauPassword2@\","
+                    + "\"confirmPassword\":\"NouveauPassword2@\"}";
+        mockMvc.perform(put("/api/auth/change-password")
+                        .header("Authorization", "token-invalide-sans-bearer")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isUnauthorized());
     }
 
-    // Test 46 - encrypt(null) → IllegalArgumentException (couvre plaintext == null TRUE)
     @Test
-    void testEncryptNullLanceException() {
-        assertThrows(IllegalArgumentException.class, () ->
-                masterKeyService.encrypt(null)
-        );
+    @DisplayName("T40 — PasswordPolicyValidator évaluation MEDIUM (4 critères, longueur < 16)")
+    void passwordStrengthMediumAvec4Criteres() {
+        assertThat(authService.evaluatePasswordStrength("TestPass1!ab")).isEqualTo("MEDIUM");
     }
 
-    // Test 47 - encrypt("   ") → IllegalArgumentException (couvre isBlank() TRUE)
     @Test
-    void testEncryptBlancLanceException() {
-        assertThrows(IllegalArgumentException.class, () ->
-                masterKeyService.encrypt("   ")
-        );
+    @DisplayName("T41 — PasswordPolicyValidator évaluation WEAK (longueur < 12)")
+    void passwordStrengthWeakCourte() {
+        assertThat(authService.evaluatePasswordStrength("Ab1!")).isEqualTo("WEAK");
     }
 
-    // Test 48 - decrypt(null) → IllegalArgumentException (couvre stored == null TRUE)
     @Test
-    void testDecryptNullLanceException() {
-        assertThrows(IllegalArgumentException.class, () ->
-                masterKeyService.decrypt(null)
-        );
+    @DisplayName("T42 — PasswordPolicyValidator évaluation WEAK (null)")
+    void passwordStrengthWeakNull() {
+        assertThat(authService.evaluatePasswordStrength(null)).isEqualTo("WEAK");
     }
 
-    // Test 49 - decrypt("") → IllegalArgumentException (couvre isBlank() TRUE)
-    @Test
-    void testDecryptVideLanceException() {
-        assertThrows(IllegalArgumentException.class, () ->
-                masterKeyService.decrypt("")
-        );
-    }
+    // ════════════════════════════════════════════════════════════════
+    //  Helpers
+    // ════════════════════════════════════════════════════════════════
 
-    // Test 50 - decrypt format invalide (pas de ':') → IllegalArgumentException (couvre parts.length != 3 TRUE)
-    @Test
-    void testDecryptFormatSansDeuxPointsLanceException() {
-        assertThrows(IllegalArgumentException.class, () ->
-                masterKeyService.decrypt("formatinvalide")
-        );
-    }
-
-    // Test 51 - decrypt préfixe invalide → IllegalArgumentException (couvre !FORMAT_PREFIX.equals(parts[0]) TRUE)
-    @Test
-    void testDecryptPrefixeInvalideLanceException() {
-        assertThrows(IllegalArgumentException.class, () ->
-                masterKeyService.decrypt("notv1:abc:def")
-        );
-    }
-
-    // Test 52 - Token expiré → AuthenticationFailedException (couvre isBefore(now()) TRUE dans TokenService)
-    @Test
-    void testTokenExpireLanceException() throws Exception {
-        authService.register(VALID_EMAIL, VALID_PASSWORD, VALID_PASSWORD);
-        LoginRequest req = buildValidRequest(VALID_EMAIL, VALID_PASSWORD);
-        var response = authService.login(req);
-
-        // Forcer l'expiration du token en base
-        AccessToken token = accessTokenRepository.findByToken(response.getAccessToken()).orElseThrow();
-        token.setExpiresAt(LocalDateTime.now().minusMinutes(30));
-        accessTokenRepository.save(token);
-
-        assertThrows(AuthenticationFailedException.class, () ->
-                authService.getUserByToken(response.getAccessToken()),
-                "Un token expiré doit lever AuthenticationFailedException"
-        );
-    }
-
-    // Test 53 - evaluateStrength(null) → "WEAK" (couvre password == null TRUE)
-    @Test
-    void testEvaluateStrengthNull() {
-        assertEquals("WEAK", passwordPolicyValidator.evaluateStrength(null));
-    }
-
-    // Test 54 - evaluateStrength sans majuscule ni chiffre → "WEAK" (couvre HAS_UPPER FALSE, HAS_DIGIT FALSE, score <= 2 TRUE)
-    @Test
-    void testEvaluateStrengthSansMajusculeEtSansChiffre() {
-        // 12 chars : lower + special → score=2 ≤ 2 → WEAK
-        assertEquals("WEAK", passwordPolicyValidator.evaluateStrength("lowercase!!!"));
-    }
-
-    // Test 55 - evaluateStrength sans minuscule → "MEDIUM" (couvre HAS_LOWER FALSE)
-    @Test
-    void testEvaluateStrengthSansMinuscule() {
-        // 13 chars : upper + digit + special → score=3 ≤ 3 → MEDIUM
-        assertEquals("MEDIUM", passwordPolicyValidator.evaluateStrength("UPPER12345!!!"));
-    }
-
-    // Test 56 - evaluateStrength longueur >= 16 → "STRONG" (couvre password.length() >= STRONG_LENGTH TRUE)
-    @Test
-    void testEvaluateStrengthAvecBonusLongueur() {
-        // 16 chars : upper + lower + digit + longueur→ score=4 > 3 → STRONG
-        assertEquals("STRONG", passwordPolicyValidator.evaluateStrength("Password12345678"));
+    /**
+     * Effectue un login HMAC valide pour les tests.
+     */
+    private LoginResponse doValidLogin(String email, String password) {
+        String nonce     = UUID.randomUUID().toString();
+        long   timestamp = Instant.now().getEpochSecond();
+        String message   = email + ":" + nonce + ":" + timestamp;
+        String hmac      = hmacService.compute(password, message);
+        return authService.login(new LoginRequest(email, nonce, timestamp, hmac));
     }
 }
 

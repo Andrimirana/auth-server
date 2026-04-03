@@ -1,171 +1,76 @@
 package com.example.auth.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 
 /**
- * Entité JPA représentant un nonce d'authentification pour la protection anti-rejeu.
+ * Entité JPA représentant un nonce (Number Used Once) anti-rejeu.
  *
- * <p>Dans le protocole TP3, chaque requête de login inclut un nonce (UUID aléatoire).
- * Le serveur vérifie que ce nonce n'a pas encore été utilisé par cet utilisateur,
- * puis l'enregistre immédiatement pour bloquer tout rejeu concurrent.</p>
+ * <p>Chaque requête de login génère un UUID unique côté client. Ce nonce est
+ * enregistré en base dès réception pour empêcher tout rejeu de la même requête,
+ * même dans la fenêtre de validité du timestamp (±60 secondes).</p>
  *
- * <h2>Garanties de sécurité</h2>
- * <ul>
- *   <li>Contrainte unique {@code (user_id, nonce)} en base de données.</li>
- *   <li>TTL de {@value #TTL_SECONDS} secondes : les nonces expirés peuvent être purgés.</li>
- *   <li>Le champ {@code consumed} est positionné à {@code true} dès la création.</li>
- * </ul>
+ * <p>La contrainte unique {@code (user_id, nonce)} garantit qu'un même nonce
+ * ne peut être utilisé deux fois par le même utilisateur.</p>
  *
- * @see com.example.auth.repository.AuthNonceRepository
- * @see com.example.auth.service.AuthService
- * @version 3.0
+ * <p>TTL : 120 secondes. Les nonces expirés peuvent être purgés périodiquement.</p>
  */
 @Entity
 @Table(
-        name = "auth_nonce",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "nonce"})
+    name = "auth_nonce",
+    uniqueConstraints = @UniqueConstraint(
+        name = "uk_user_nonce",
+        columnNames = {"user_id", "nonce"}
+    )
 )
+@Getter
+@Setter
+@NoArgsConstructor
 public class AuthNonce {
-
-    /**
-     * Durée de vie d'un nonce en secondes.
-     * Après ce délai, le nonce peut être purgé par la tâche de nettoyage.
-     */
-    public static final long TTL_SECONDS = 120L;
 
     /** Identifiant technique auto-généré. */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /**
-     * Utilisateur propriétaire du nonce.
-     * La contrainte d'unicité porte sur le couple {@code (user_id, nonce)}.
-     */
-    @ManyToOne(fetch = FetchType.LAZY)
+    /** Utilisateur émetteur du nonce. */
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    /**
-     * Valeur du nonce (UUID) envoyée par le client dans la requête de login.
-     * Unique par utilisateur.
-     */
+    /** Valeur UUID du nonce — unique par utilisateur. */
     @Column(nullable = false)
     private String nonce;
 
-    /**
-     * Date/heure d'expiration du nonce ({@code createdAt + TTL_SECONDS}).
-     * Passé cette date, le nonce peut être supprimé de la base.
-     */
+    /** Date d'expiration du nonce (now + 120 secondes). */
     @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
 
-    /**
-     * Indique si le nonce a été consommé.
-     * Toujours {@code true} dès l'insertion : tout nonce enregistré est considéré consommé.
-     */
+    /** Marqueur de consommation — true une fois utilisé. */
     @Column(nullable = false)
     private boolean consumed = false;
 
-    /** Date et heure d'enregistrement du nonce. */
+    /** Date de création. */
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
     /**
-     * Constructeur par défaut requis par JPA.
-     */
-    public AuthNonce() {}
-
-    /**
-     * Crée et marque immédiatement le nonce comme consommé.
-     * La date d'expiration est positionnée à {@code now + TTL_SECONDS}.
+     * Constructeur de création d'un nonce.
      *
-     * @param user  utilisateur associé au nonce
-     * @param nonce valeur UUID du nonce
+     * @param user      utilisateur émetteur
+     * @param nonce     valeur UUID du nonce
+     * @param expiresAt date d'expiration (now + 120s)
      */
-    public AuthNonce(User user, String nonce) {
-        this.user = user;
-        this.nonce = nonce;
+    public AuthNonce(User user, String nonce, LocalDateTime expiresAt) {
+        this.user      = user;
+        this.nonce     = nonce;
+        this.expiresAt = expiresAt;
+        this.consumed  = false;
         this.createdAt = LocalDateTime.now();
-        this.expiresAt = LocalDateTime.now().plusSeconds(TTL_SECONDS);
-        this.consumed = true;
     }
-
-    /**
-     * Retourne l'identifiant technique.
-     *
-     * @return identifiant généré en base
-     */
-    public Long getId() { return id; }
-
-    /**
-     * Retourne l'utilisateur associé à ce nonce.
-     *
-     * @return utilisateur propriétaire
-     */
-    public User getUser() { return user; }
-
-    /**
-     * Modifie l'utilisateur propriétaire.
-     *
-     * @param user utilisateur à associer
-     */
-    public void setUser(User user) { this.user = user; }
-
-    /**
-     * Retourne la valeur du nonce.
-     *
-     * @return UUID du nonce
-     */
-    public String getNonce() { return nonce; }
-
-    /**
-     * Modifie la valeur du nonce.
-     *
-     * @param nonce nouvelle valeur UUID
-     */
-    public void setNonce(String nonce) { this.nonce = nonce; }
-
-    /**
-     * Retourne la date d'expiration du nonce.
-     *
-     * @return date/heure d'expiration
-     */
-    public LocalDateTime getExpiresAt() { return expiresAt; }
-
-    /**
-     * Modifie la date d'expiration.
-     *
-     * @param expiresAt nouvelle date d'expiration
-     */
-    public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }
-
-    /**
-     * Indique si le nonce a été consommé.
-     *
-     * @return {@code true} si consommé (toujours vrai après création)
-     */
-    public boolean isConsumed() { return consumed; }
-
-    /**
-     * Modifie l'état de consommation.
-     *
-     * @param consumed {@code true} pour marquer comme consommé
-     */
-    public void setConsumed(boolean consumed) { this.consumed = consumed; }
-
-    /**
-     * Retourne la date de création du nonce.
-     *
-     * @return date/heure de création
-     */
-    public LocalDateTime getCreatedAt() { return createdAt; }
-
-    /**
-     * Modifie la date de création.
-     *
-     * @param createdAt nouvelle date de création
-     */
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
+

@@ -87,7 +87,6 @@ jobs:
 
       # 7. Build image Docker (TP5)
       #    BLOQUE si le Dockerfile est invalide ou si le build echoue
-      #    APP_MASTER_KEY n'est JAMAIS incluse dans l'image
       - name: Build Docker image
         working-directory: ./auth
         run: docker build -t cdwfs-auth-app:${{ github.sha }} .

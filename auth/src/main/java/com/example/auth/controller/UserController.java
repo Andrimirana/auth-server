@@ -1,7 +1,6 @@
 package com.example.auth.controller;
 
 import com.example.auth.entity.User;
-import com.example.auth.exception.AuthenticationFailedException;
 import com.example.auth.service.AuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -9,24 +8,15 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * Contrôleur REST gérant les routes protégées par token SSO Bearer.
+ * Contrôleur REST des endpoints utilisateur protégés.
  *
- * <h2>Endpoints exposés</h2>
+ * <p>Endpoint exposé :</p>
  * <ul>
- *   <li>{@code GET /api/me} — retourne le profil de l'utilisateur authentifié.</li>
+ *   <li>{@code GET /api/me} — accessible uniquement avec un Bearer token valide</li>
  * </ul>
  *
- * <p>L'authentification est vérifiée via le header HTTP :</p>
- * <pre>
- *   Authorization: Bearer &lt;accessToken&gt;
- * </pre>
- *
- * <p>Le token est obtenu après un login réussi ({@code POST /api/auth/login}).
- * Sa validité est de {@link com.example.auth.entity.AccessToken#EXPIRY_MINUTES} minutes.</p>
- *
- * @see AuthService#getUserByToken(String)
- * @see com.example.auth.service.TokenService
- * @version 3.0
+ * <p>⚠️ Cette implémentation est pédagogique. Ne jamais utiliser en production
+ * sans audit de sécurité complet.</p>
  */
 @RestController
 @RequestMapping("/api")
@@ -34,45 +24,41 @@ public class UserController {
 
     private final AuthService authService;
 
-    /**
-     * Injecte le service d'authentification via le constructeur.
-     *
-     * @param authService service principal d'authentification
-     */
     public UserController(AuthService authService) {
         this.authService = authService;
     }
 
     /**
-     * Retourne le profil de l'utilisateur authentifié par token Bearer.
+     * Retourne les informations de l'utilisateur authentifié.
      *
-     * <pre>
-     * GET /api/me
-     * Authorization: Bearer &lt;accessToken&gt;
-     * </pre>
+     * <p>Requiert un header {@code Authorization: Bearer <token>} valide.</p>
      *
-     * @param authHeader valeur du header {@code Authorization}
-     *                   (doit commencer par {@code "Bearer "})
-     * @return HTTP 200 avec {@code {"message": "Accès autorisé", "email": "..."}}
-     *         si le token est valide et non expiré ;
-     *         HTTP 401 si le header est absent, mal formé, ou si le token est invalide/expiré
+     * @param authHeader header {@code Authorization: Bearer <token>}
+     * @return HTTP 200 avec les informations de l'utilisateur
      */
     @GetMapping("/me")
-    public ResponseEntity<Map<String, Object>> me(
-            @RequestHeader(value = "Authorization", required = false) String authHeader) {
-
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new AuthenticationFailedException(
-                    "Token manquant. Utilisez : Authorization: Bearer <token>"
-            );
-        }
-
-        String tokenValue = authHeader.substring(7);
-        User user = authService.getUserByToken(tokenValue);
-
+    public ResponseEntity<Map<String, Object>> getMe(
+            @RequestHeader("Authorization") String authHeader) {
+        String token = extractBearerToken(authHeader);
+        User   user  = authService.getUserByToken(token);
         return ResponseEntity.ok(Map.of(
-                "message", "Accès autorisé",
-                "email", user.getEmail()
+                "email",     user.getEmail(),
+                "id",        user.getId(),
+                "createdAt", user.getCreatedAt().toString()
         ));
     }
+
+    /**
+     * Extrait la valeur du token depuis le header Authorization.
+     *
+     * @param authHeader valeur du header {@code Authorization}
+     * @return la valeur du token Bearer
+     */
+    private String extractBearerToken(String authHeader) {
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7);
+        }
+        return authHeader;
+    }
 }
+

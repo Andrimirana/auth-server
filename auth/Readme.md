@@ -1,291 +1,134 @@
-# Serveur d'Authentification — TP1 à TP5
+# Serveur d'Authentification HMAC-SHA256
 
-Projet individuel — Parcours CDWFS  
-API REST sécurisée construite progressivement avec Java, Spring Boot et MySQL.
-
----
-
-## Prérequis
-
-- Java 17+
-- Maven 3.x
-- MySQL 8.x
-- IntelliJ IDEA
+> **Parcours :** CDWFS — D. Samfat  
+> **Framework :** Spring Boot 3.2.5 — Java 17  
+> **Base de données :** MySQL (prod) / H2 (tests)  
+> **Qualité :** SonarCloud — `Andrimirana_auth-server`
 
 ---
 
-## Lancer le projet
+## Demarrage rapide
 
-### 1. Créer la base MySQL
+### Prerequis
+
+- Java 17
+- Maven 3.9+
+- MySQL 8.x (pour la production)
+- Docker Desktop (pour TP5)
+
+### 1. Configurer MySQL
+
 ```sql
-CREATE DATABASE auth;
+CREATE DATABASE auth CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### 2. Configurer `application.properties`
+Editer `src/main/resources/application.properties` si necessaire :
+
 ```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/auth
 spring.datasource.username=root
-spring.datasource.password=TON_MOT_DE_PASSE
+spring.datasource.password=votre_mot_de_passe
 ```
 
-### 3. Générer et définir la Master Key AES-256 (obligatoire depuis TP4)
+### 2. Definir la Master Key
 
-**Linux / Mac :**
-```bash
-export APP_MASTER_KEY=$(openssl rand -base64 32)
-```
-
-**Windows (PowerShell) :**
 ```powershell
-$env:APP_MASTER_KEY = [Convert]::ToBase64String((1..32 | ForEach-Object { [byte](Get-Random -Max 256) }))
+$env:APP_MASTER_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 ```
 
-> ⚠️ La clé doit être une chaîne Base64 représentant exactement 32 octets (AES-256).  
-> Sans cette variable, le serveur **refuse de démarrer**.
+### 3. Lancer l'API
 
-### 4. Lancer le serveur
-```bash
+```powershell
 mvn spring-boot:run
 ```
 
-L'API démarre sur : http://localhost:8080
+L'API est disponible sur `http://localhost:8080`.
 
-### 5. Lancer le client Java (Swing)
-```bash
-cd ../auth-client
-mvn exec:java -Dexec.mainClass="org.example.Main"
+### 4. Lancer les tests (H2, sans MySQL)
+
+```powershell
+$env:APP_MASTER_KEY = "test_master_key_for_ci_only_32chars__"
+mvn clean verify -Dspring.profiles.active=test
 ```
 
 ---
 
-## Comptes de test
+## Compte de test obligatoire
 
-| TP | Email | Mot de passe | Remarque |
-|----|-------|-------------|----------|
-| TP1 (historique) | toto@example.com | pwd1234 | Stocké en clair, politique faible |
-| TP4 (actuel) | toto@example.com | Password123! | Chiffré AES-GCM, politique stricte |
-
----
-
-## Endpoints
-
-| Méthode | URL | Description |
-|---------|-----|-------------|
-| POST | /api/auth/register | Inscription |
-| POST | /api/auth/login | Connexion HMAC-SHA256 |
-| GET | /api/me | Route protégée (Bearer token) |
-| POST | /api/auth/password-strength | Force du mot de passe |
-| PUT | /api/auth/change-password | Changement de mot de passe (TP5, Bearer token requis) |
+| Email | Mot de passe |
+|---|---|
+| `toto@example.com` | `TestPassword1!` |
 
 ---
 
-## Analyse de sécurité TP1
+## Client Java (Swing)
 
-> ⚠️ Cette implémentation est volontairement dangereuse et ne doit jamais être utilisée en production.
+```powershell
+cd auth-client
+mvn spring-boot:run
+```
 
-**Risque 1 — Mot de passe stocké en clair en base**  
-Si la base est compromise, tous les mots de passe sont exposés immédiatement, sans aucun effort de déchiffrement.
-
-**Risque 2 — Mot de passe transmis en clair sur le réseau**  
-Le mot de passe voyage dans la requête HTTP. Une écoute réseau (man-in-the-middle) suffit à le capturer.
-
-**Risque 3 — Aucune politique de mot de passe**  
-4 caractères minimum seulement. Des mots de passe comme "1234" ou "abcd" sont acceptés, rendant les attaques par dictionnaire triviales.
-
-**Risque 4 — Aucune protection contre le brute-force**  
-Aucune limite de tentatives. Un attaquant peut tester des millions de combinaisons automatiquement.
-
-**Risque 5 — Token de session non sécurisé**  
-Token UUID sans expiration, non invalidable facilement. Un token volé reste valide indéfiniment.
+Le client se connecte automatiquement sur `http://localhost:8080`.
 
 ---
 
-## Analyse de sécurité TP2
+## Docker (TP5)
 
-**Amélioration 1 — Hash BCrypt**  
-Le mot de passe est haché avant stockage. La base compromise ne révèle pas les mots de passe.
-
-**Amélioration 2 — Politique stricte**  
-12 caractères minimum, majuscule, minuscule, chiffre et caractère spécial obligatoires.
-
-**Amélioration 3 — Anti brute-force**  
-Blocage après 5 échecs consécutifs pendant 2 minutes (HTTP 429).
-
-**Limite restante TP2** : la requête de login contient encore une preuve directe du mot de passe. Si une requête est capturée, elle peut être rejouée. Corrigé en TP3.
-
----
-
-## Analyse de sécurité TP3
-
-> TP3 change le protocole : le mot de passe ne circule plus jamais sur le réseau.
-
-**Amélioration 1 — Protocole HMAC-SHA256**  
-Le client envoie une signature : `hmac = HMAC_SHA256(clé=password, data=email:nonce:timestamp)`.  
-Le mot de passe n'est jamais transmis, ni en clair ni en hash.
-
-**Amélioration 2 — Anti-rejeu (nonce)**  
-Chaque requête contient un UUID unique consommé immédiatement. Une requête capturée ne peut pas être rejouée.
-
-**Amélioration 3 — Fenêtre temporelle (timestamp)**  
-Le timestamp est vérifié à ±60 secondes. Une requête capturée expire rapidement.
-
-**Amélioration 4 — Token SSO Bearer**  
-Après login réussi, un token Bearer valable 15 minutes est émis pour accéder aux routes protégées.
-
-**Limite restante TP3** : le mot de passe est stocké en clair en base pour permettre le recalcul HMAC. Corrigé en TP4.
-
----
-
-## Analyse de sécurité TP4
-
-> TP4 industrialise la protection des mots de passe au repos et automatise la qualité via CI/CD.
-
-**Amélioration 1 — Chiffrement AES-GCM par Master Key**  
-Les mots de passe ne sont plus jamais stockés en clair. Ils sont chiffrés avec AES-256-GCM avant insertion en base.  
-Format : `v1:Base64(iv):Base64(ciphertext)`.
-
-**Amélioration 2 — IV aléatoire à chaque chiffrement**  
-Un vecteur d'initialisation de 12 octets est généré aléatoirement à chaque appel, garantissant que deux chiffrements du même mot de passe produisent des résultats différents.
-
-**Amélioration 3 — Intégrité garantie par GCM**  
-AES-GCM inclut un tag d'authenticité de 128 bits. Toute modification du ciphertext est détectée et lève une exception.
-
-**Amélioration 4 — Master Key injectée par variable d'environnement**  
-La clé n'est jamais dans le code source. L'application refuse de démarrer si `APP_MASTER_KEY` est absente ou invalide.
-
-**Amélioration 5 — CI/CD automatisée**  
-Chaque push déclenche automatiquement build, tests JUnit et analyse SonarCloud. Un merge est bloqué si la qualité est insuffisante.
-
-**Limite pédagogique** : le chiffrement réversible (AES-GCM) est conservé uniquement pour permettre le protocole HMAC du TP3.  
-En production industrielle pure, on utiliserait OAuth2/OIDC avec un hash non réversible (bcrypt/argon2).
-
----
-
-## Analyse de sécurité TP5
-
-> TP5 ajoute le changement de mot de passe sécurisé et la conteneurisation Docker.
-
-**Amélioration 1 — Changement de mot de passe authentifié**  
-L'utilisateur doit présenter un Bearer token valide ET l'ancien mot de passe pour modifier ses credentials. Sans token valide, la requête est rejetée avec HTTP 401.
-
-**Amélioration 2 — Vérification de l'ancien mot de passe**  
-Le serveur déchiffre le mot de passe stocké via la Master Key et le compare à l'ancien mot de passe fourni. Un attaquant ayant volé le token seul ne peut pas changer le mot de passe sans connaître l'ancien.
-
-**Amélioration 3 — Politique de mot de passe maintenue**  
-Le nouveau mot de passe est soumis aux mêmes règles strictes (12 caractères, majuscule, minuscule, chiffre, spécial). Les mots de passe faibles sont refusés avec HTTP 400.
-
-**Amélioration 4 — Chiffrement systématique du nouveau mot de passe**  
-Le nouveau mot de passe est chiffré via AES-256-GCM avant stockage. Il ne circule jamais en clair en dehors de la requête HTTPS.
-
-**Amélioration 5 — Conteneurisation Docker**  
-L'application est packagée en image Docker, permettant un déploiement reproductible. La Master Key est injectée via la variable d'environnement `APP_MASTER_KEY` au démarrage du conteneur, jamais intégrée dans l'image.
-
----
-
-## Lancer avec Docker (TP5)
-
-### 1. Builder l'image
-```bash
-cd auth
-mvn clean package -DskipTests
+```powershell
+# Construire l'image
 docker build -t cdwfs-auth-app .
-```
 
-### 2. Lancer le conteneur
-```bash
-docker run -p 8080:8080 \
-  -e APP_MASTER_KEY=$(openssl rand -base64 32) \
-  -e SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/auth \
-  -e SPRING_DATASOURCE_USERNAME=root \
-  -e SPRING_DATASOURCE_PASSWORD=TON_MOT_DE_PASSE \
+# Lancer le conteneur
+docker run -p 8080:8080 `
+  -e APP_MASTER_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" `
+  -e SPRING_DATASOURCE_URL="jdbc:mysql://host.docker.internal:3306/auth" `
   cdwfs-auth-app
 ```
 
-> ⚠️ Ne jamais inclure `APP_MASTER_KEY` dans le Dockerfile ou dans l'image.
+---
 
-### 3. Nouvel endpoint TP5
+## Endpoints API
 
-| Méthode | URL | Description |
-|---------|-----|-------------|
-| PUT | /api/auth/change-password | Changement de mot de passe (Bearer token requis) |
+| Methode | Endpoint | Description | Auth |
+|---|---|---|---|
+| POST | `/api/auth/register` | Inscription | Non |
+| POST | `/api/auth/login` | Connexion HMAC-SHA256 | Non |
+| POST | `/api/auth/password-strength` | Force du mot de passe | Non |
+| PUT | `/api/auth/change-password` | Changement mot de passe | Bearer |
+| GET | `/api/me` | Infos utilisateur connecte | Bearer |
 
-**Corps JSON :**
-```json
-{
-  "oldPassword": "AncienMotDePasse1!",
-  "newPassword": "NouveauMotDePasse2@",
-  "confirmPassword": "NouveauMotDePasse2@"
-}
+---
+
+## Qualite SonarCloud
+
+```powershell
+.\run-sonar.ps1 -Token "sqp_votre_token"
 ```
 
-**Header :** `Authorization: Bearer <accessToken>`
+Resultats : https://sonarcloud.io/project/overview?id=Andrimirana_auth-server
 
 ---
 
-## Qualité
+## Analyse de securite TP1
 
-- **Tests JUnit** : 42 tests — tous verts ✅
-- **Couverture JaCoCo** : ≥ 80%
-- **SonarCloud** : configuré et Quality Gate en succès
+> Cette implementation est volontairement dangereuse et ne doit jamais etre utilisee en production.
 
-### Configuration SonarCloud
-
-Ajouter dans GitHub → Settings → Secrets and variables → Actions :
-
-| Secret | Valeur |
-|--------|--------|
-| `SONAR_TOKEN` | Token généré sur sonarcloud.io |
-| `SONAR_PROJECT_KEY` | Clé du projet SonarCloud |
-| `SONAR_ORGANIZATION` | Organisation SonarCloud |
+| # | Risque | Impact |
+|---|---|---|
+| 1 | **Mot de passe stocke en clair (TP1)** | Base compromise = tous les mots de passe exposes en clair |
+| 2 | **Mot de passe transmis en clair sur le reseau (TP1)** | Ecoute reseau (MITM) suffit a capturer le mot de passe |
+| 3 | **Aucune politique de mot de passe (TP1)** | "abcd" accepte, brute-force trivial |
+| 4 | **Aucune protection anti brute-force (TP1)** | Tentatives de connexion illimitees |
+| 5 | **Token non signe et sans expiration (TP1)** | Vol du token = acces permanent et indefini |
 
 ---
 
-## CI/CD GitHub Actions
+## Evolution par TP
 
-Le fichier `.github/workflows/ci.yml` déclenche automatiquement sur chaque push / pull request vers `main` :
-
-1. Checkout du code
-2. Installation JDK 17
-3. Build Maven + exécution des tests (H2 en mémoire, pas de MySQL)
-4. Analyse SonarCloud avec Quality Gate
-5. Échec automatique si un test échoue ou si le Quality Gate est rouge
-
-> La Master Key de CI est une clé fictive injectée via `APP_MASTER_KEY` dans les secrets GitHub.  
-> Elle n'est jamais committée dans le code.
-
----
-
-## Tags Git
-
-| Tag | Description |
-|-----|-------------|
-| v1.0-init | Projet vide Spring Boot + structure packages |
-| v1.1-model | Entité User + repository |
-| v1.2-register | Endpoint /api/auth/register + exceptions |
-| v1.3-login | Endpoint /api/auth/login + logging |
-| v1.4-protected | Route /api/me + token simple |
-| v1-tp1 | TP1 final — authentification dangereuse |
-| v2.0-start | Démarrage TP2 |
-| v2.1-db-migration | Migration password_clear → password_hash |
-| v2.2-password-policy | PasswordPolicyValidator + tests |
-| v2.3-hashing | BCrypt — inscription et login |
-| v2.4-lockout | Anti brute-force : 5 échecs → blocage 2 min |
-| v2.5-ui-strength | Indicateur force mot de passe client |
-| v2.6-sonarcloud | SonarCloud configuré + corrections |
-| v2-tp2 | TP2 final — authentification fragile |
-| v3.0-start | Démarrage TP3 |
-| v3.1-db-nonce | Table auth_nonce |
-| v3.2-hmac-client | Calcul HMAC côté client Swing |
-| v3.3-hmac-server | Vérification HMAC côté serveur |
-| v3.4-anti-replay | Protection anti-rejeu nonce |
-| v3.5-token | Émission token SSO + /api/me |
-| v3.6-tests-80 | Couverture 80% + 15 tests |
-| v3-tp3 | TP3 final — authentification forte HMAC |
-| v4-tp4 | TP4 final — Master Key AES-GCM + CI/CD |
-| v5.0-start | Démarrage TP5 — README TP5 |
-| v5.1-change-password | Endpoint PUT /api/auth/change-password |
-| v5.2-tests | Tests JUnit changement de mot de passe |
-| v5.3-docker | Dockerfile Spring Boot |
-| v5.4-cicd-docker | Pipeline CI/CD mise à jour avec Docker build |
-| v5-tp5 | TP5 final — Change Password + Docker |
+| TP | Niveau | Stockage MDP | Protocole | Anti BF | Anti-rejeu |
+|---|---|---|---|---|---|
+| TP1 | Dangereuse | En clair | Email + MDP clair | Non | Non |
+| TP2 | Fragile | BCrypt | Email + hash | 5 echecs -> 2 min | Non |
+| TP3 | Forte | Reversible | HMAC + nonce + timestamp | Oui | Oui |
+| TP4 | Industrielle | AES-256-GCM | HMAC + nonce + timestamp | Oui | Oui |
+| TP5 | Production | AES-256-GCM | HMAC + change-password | Oui | Oui |
 

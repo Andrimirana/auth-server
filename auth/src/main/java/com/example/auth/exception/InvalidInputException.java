@@ -1,29 +1,20 @@
 package com.example.auth.exception;
 
 /**
- * Exception levée lorsque les données envoyées par le client sont invalides.
+ * Exception levée lorsque les données fournies par le client sont invalides.
  *
- * <p>Cas d'utilisation :</p>
- * <ul>
- *   <li>Email vide ou mal formaté.</li>
- *   <li>Mot de passe ne respectant pas la politique (TP2+).</li>
- *   <li>Confirmation de mot de passe non correspondante.</li>
- *   <li>Champs obligatoires manquants dans la requête.</li>
- * </ul>
+ * <p>Cas d'usage : email vide ou malformé, mot de passe trop court,
+ * politique de complexité non respectée, mots de passe non concordants.</p>
  *
- * <p>Retourne un HTTP 400 Bad Request via {@link GlobalExceptionHandler}.</p>
+ * <p>Retourne HTTP 400 Bad Request via {@link GlobalExceptionHandler}.</p>
  *
- * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement dangereuse
- * et ne doit jamais être utilisée en production.</p>
- *
- * @see GlobalExceptionHandler
- * @see com.example.auth.service.AuthService
- * @version 3.0
+ * <p>⚠️ Cette implémentation est pédagogique. Ne jamais utiliser en production
+ * sans audit de sécurité complet.</p>
  */
 public class InvalidInputException extends RuntimeException {
 
     /**
-     * Crée une exception de validation avec le message d'erreur fourni.
+     * Crée une exception d'entrée invalide avec un message descriptif.
      *
      * @param message description de l'erreur de validation
      */
@@ -31,3 +22,4 @@ public class InvalidInputException extends RuntimeException {
         super(message);
     }
 }
+

@@ -2,31 +2,28 @@ package com.example.auth.repository;
 
 import com.example.auth.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+
 import java.util.Optional;
 
 /**
- * Repository Spring Data JPA pour l'accès aux utilisateurs en base de données.
- *
- * <p>Fournit les opérations CRUD standard héritées de {@link JpaRepository}
- * ainsi que la recherche par email utilisée lors de l'inscription et du login.</p>
- *
- * <p><b>AVERTISSEMENT :</b> Cette implémentation est volontairement dangereuse
- * et ne doit jamais être utilisée en production.</p>
- *
- * @see com.example.auth.entity.User
- * @see com.example.auth.service.AuthService
- * @version 3.0
+ * Repository JPA pour la gestion des utilisateurs.
  */
 public interface UserRepository extends JpaRepository<User, Long> {
 
     /**
-     * Recherche un utilisateur par son adresse email.
+     * Recherche un utilisateur par son email.
      *
-     * <p>Utilisé lors de l'inscription (vérification de doublon) et
-     * lors du login (chargement pour recalcul HMAC).</p>
-     *
-     * @param email adresse email à rechercher
-     * @return un {@link Optional} contenant l'utilisateur si trouvé, vide sinon
+     * @param email l'adresse email à rechercher
+     * @return un Optional contenant l'utilisateur s'il existe
      */
     Optional<User> findByEmail(String email);
+
+    /**
+     * Vérifie si un email est déjà utilisé.
+     *
+     * @param email l'adresse email à vérifier
+     * @return true si l'email existe déjà
+     */
+    boolean existsByEmail(String email);
 }
+
