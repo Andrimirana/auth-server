@@ -129,13 +129,18 @@ jobs:
                 HOTSPOT_REVIEW_FAILED=true
               fi
             done
+
+            # Attendre que SonarCloud recalcule les metriques apres la review
+            echo "Waiting 15s for SonarCloud to update metrics after hotspot review..."
+            sleep 15
           else
             echo "No pending hotspots."
           fi
 
-          # Verifier le Quality Gate
+          # Verifier le Quality Gate sur l'etat COURANT du projet (projectKey)
+          # et non sur le snapshot d'analyse (analysisId) qui est fige avant la review
           QG_JSON=$(curl -sf -u "${SONAR_TOKEN}:" \
-            "https://sonarcloud.io/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
+            "https://sonarcloud.io/api/qualitygates/project_status?projectKey=Andrimirana_auth-server")
           QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status')
           echo "Quality Gate status: $QG_STATUS"
 
