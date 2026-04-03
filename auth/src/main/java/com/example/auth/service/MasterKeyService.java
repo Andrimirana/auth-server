@@ -39,10 +39,13 @@ import java.util.Base64;
 @Service
 public class MasterKeyService {
 
-    private static final String ALGORITHM       = "AES/GCM/NoPadding";
-    private static final int    GCM_TAG_LENGTH  = 128;
-    private static final int    GCM_IV_LENGTH   = 12;
-    private static final String FORMAT_PREFIX   = "v1";
+    private static final String ALGORITHM      = "AES/GCM/NoPadding";
+    private static final int    GCM_TAG_LENGTH = 128;
+    private static final int    GCM_IV_LENGTH  = 12;
+    private static final String FORMAT_PREFIX  = "v1";
+
+    /** Instance unique et thread-safe — réutilisée à chaque chiffrement (fix S2119). */
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     @Value("${app.master-key:}")
     private String masterKeyRaw;
@@ -81,7 +84,7 @@ public class MasterKeyService {
     public String encrypt(String plaintext) {
         try {
             byte[] iv = new byte[GCM_IV_LENGTH];
-            new SecureRandom().nextBytes(iv);
+            SECURE_RANDOM.nextBytes(iv);   // réutilisation du champ static (fix S2119)
 
             Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
@@ -123,4 +126,3 @@ public class MasterKeyService {
         }
     }
 }
-
