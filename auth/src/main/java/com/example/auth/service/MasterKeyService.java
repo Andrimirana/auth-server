@@ -66,7 +66,7 @@ public class MasterKeyService {
             byte[] keyBytes = MessageDigest.getInstance("SHA-256")
                     .digest(masterKeyRaw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             this.secretKey = new SecretKeySpec(keyBytes, "AES");
-        } catch (Exception e) {
+        } catch (GeneralSecurityException e) {
             throw new IllegalStateException("Impossible d'initialiser la Master Key", e);
         }
     }
